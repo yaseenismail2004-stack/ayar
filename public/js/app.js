@@ -86,7 +86,7 @@ const finePointer = () => !window.matchMedia || matchMedia('(pointer: fine)').ma
 const today = () => new Date().toISOString().slice(0, 10);
 const num = v => { const n = parseFloat(String(v).replace(/,/g, '')); return isNaN(n) ? 0 : n; };
 const money = v => `${Number(v || 0).toLocaleString('en-US', { maximumFractionDigits: 2 })} ${esc(S()?.settings.currency || '')}`;
-const safeImg = v => (typeof v === 'string' && /^data:image\/(png|jpe?g|webp|gif);base64,[A-Za-z0-9+/=]+$/.test(v)) ? v : '';
+const safeImg = v => (typeof v === 'string' && (/^data:image\/(png|jpe?g|webp|gif);base64,[A-Za-z0-9+/=]+$/.test(v) || /^\/api\/img\/[a-z0-9]+$/.test(v))) ? v : '';
 const fmtDate = d => d ? new Date(d).toLocaleDateString('en-GB') : '—';
 const fmtDT = d => new Date(d).toLocaleString('en-GB', { dateStyle: 'short', timeStyle: 'short' });
 const daysTo = d => Math.ceil((new Date(d) - new Date(today())) / 864e5);
@@ -304,7 +304,11 @@ function showLogin() {
   };
 }
 async function startSession(user) {
-  if (DB.online) await DB.load();
+  DB.user = user.id;
+  if (DB.online) {
+    try { await DB.load(); }
+    catch (e) { toast(e.message, true); return showLogin(); }
+  }
   me = S().users.find(x => x.id === user.id) || user;
   applyTheme();
   $('#login')?.remove(); $('.app').classList.remove('hidden');
@@ -487,45 +491,50 @@ function drawCart() {
   };
   $('#checkout', el).onclick = () => checkout(payMethod, $('#paid', el).value);
 }
-function checkout(method, paidRaw) {
-  if (!cart.length) return;
+let checkingOut = false;
+async function checkout(method, paidRaw) {
+  if (!cart.length || checkingOut) return;
   const s = S();
   const sub0 = cart.reduce((t, l) => t + l.qty * l.price, 0), total0 = Math.max(0, sub0 - discount);
-  let paid, due = 0;
-  if (method === 'آجل') {
-    if (!posCustomer) return pickCustomer(c => { posCustomer = c; drawCart(); });
-    paid = Math.min(num(paidRaw), total0); due = total0 - paid;
+  if (method === 'آجل' && !posCustomer) return pickCustomer(c => { posCustomer = c; drawCart(); });
+  if (method !== 'آجل' && paidRaw !== '' && num(paidRaw) < total0) { beep(false); return toast('المبلغ المستلم أقل من الإجمالي — اختر "آجل" لتسجيل الباقي ديناً', true); }
+  for (const l of cart) { const p = findProduct(l.id); if (!p || l.qty > sellableQty(p)) return toast(`الكمية غير متوفرة: ${p?.name || 'منتج محذوف'}`, true); }
+  let sale;
+  if (DB.online) {
+    // البيع يتم على الخادم: يخصم المخزون بأمان حتى لو باع جهازان بنفس الوقت
+    checkingOut = true;
+    const btn = $('#checkout'); if (btn) { btn.disabled = true; btn.textContent = 'جاري الحفظ…'; }
+    try {
+      sale = await DB.checkout({ items: cart.map(l => ({ productId: l.id, qty: l.qty })), discount, method,
+        paid: paidRaw === '' ? (method === 'آجل' ? 0 : '') : num(paidRaw), customerId: posCustomer?.id || null });
+    } catch (e) { beep(false); toast(e.message, true); if (e.status === 409) await DB.pull(); drawCart(); return; }
+    finally { checkingOut = false; }
   } else {
-    paid = paidRaw === '' ? total0 : num(paidRaw);
-    if (paid < total0) { beep(false); return toast('المبلغ المستلم أقل من الإجمالي — اختر "آجل" لتسجيل الباقي ديناً', true); }
-  }
-  const items = [];
-  for (const l of cart) {
-    const p = findProduct(l.id);
-    if (l.qty > sellableQty(p)) return toast(`الكمية غير متوفرة: ${p.name}`, true);
-  }
-  for (const l of cart) {
-    const p = findProduct(l.id);
-    let need = l.qty; const used = [];
-    // صرف من الأقرب انتهاءً أولاً (FEFO)
-    for (const b of sellableBatches(p)) {
-      if (!need) break;
-      const take = Math.min(b.qty, need);
-      b.qty -= take; need -= take;
-      used.push({ batchId: b.id, qty: take, expiry: b.expiry });
+    let paid, due = 0;
+    if (method === 'آجل') { paid = Math.min(num(paidRaw), total0); due = total0 - paid; }
+    else paid = paidRaw === '' ? total0 : num(paidRaw);
+    const items = [];
+    for (const l of cart) {
+      const p = findProduct(l.id);
+      let need = l.qty; const used = [];
+      for (const b of sellableBatches(p)) { // صرف من الأقرب انتهاءً أولاً (FEFO)
+        if (!need) break;
+        const take = Math.min(b.qty, need);
+        b.qty -= take; need -= take;
+        used.push({ batchId: b.id, qty: take, expiry: b.expiry });
+      }
+      items.push({ productId: p.id, name: p.name, qty: l.qty, price: p.price, cost: p.cost || 0, batches: used });
     }
-    items.push({ productId: p.id, name: p.name, qty: l.qty, price: l.price, cost: p.cost || 0, batches: used });
+    const subtotal = items.reduce((t, i) => t + i.qty * i.price, 0);
+    sale = { id: DB.uid(), no: s.seq.sale++, date: new Date().toISOString(), items, subtotal, discount, total: Math.max(0, subtotal - discount),
+      paid, due, method, userId: me.id, userName: me.name, customerId: posCustomer?.id || null, customerName: posCustomer?.name || '' };
+    s.sales.push(sale);
+    DB.save();
   }
-  const subtotal = items.reduce((t, i) => t + i.qty * i.price, 0);
-  const sale = {
-    id: DB.uid(), no: s.seq.sale++, date: new Date().toISOString(), items, subtotal, discount, total: Math.max(0, subtotal - discount),
-    paid, due, method, userId: me.id, userName: me.name,
-    customerId: posCustomer?.id || null, customerName: posCustomer?.name || ''
-  };
-  s.sales.push(sale);
-  DB.save();
   cart = []; discount = 0; posCustomer = null; payMethod = 'نقد';
   setCart(false);
+  beep();
+  const paid = sale.paid, due = sale.due;
   const m = modal(`${modalHead('تم البيع بنجاح ✅')}
     <div class="center"><div class="muted">فاتورة رقم #${sale.no}${sale.customerName ? ` — ${esc(sale.customerName)}` : ''}</div><div style="font-size:34px;font-weight:800;color:var(--primary);margin:10px 0">${money(sale.total)}</div>
     ${paid > sale.total ? `<div>الباقي للزبون: <b>${money(paid - sale.total)}</b></div>` : ''}
@@ -1092,7 +1101,7 @@ function purchaseForm(after) {
     const t = items.reduce((s, i) => s + i.qty * i.cost, 0);
     const pu = { id: DB.uid(), no: S().seq.purchase++, date: $('#pu-date', el).value || today(), supplierId, invoiceNo: $('#pu-inv', el).value.trim(),
       items, total: t, paid: Math.min(num($('#pu-paid', el).value), t), userName: me.name, createdAt: new Date().toISOString() };
-    S().purchases.push(pu); DB.save(); m.close(); toast(`تم حفظ فاتورة الشراء #${pu.no} وإضافة ${items.reduce((s, i) => s + i.qty, 0)} وحدة للمخزون ✅`);
+    S().purchases.push(pu); DB.save(); m.close(); toast(`تم حفظ فاتورة الشراء وإضافة ${items.reduce((s, i) => s + i.qty, 0)} وحدة للمخزون ✅`);
     after && after();
   };
 }
@@ -1272,16 +1281,16 @@ function userForm(u, after) {
 
 // ================= موقع العرض =================
 function renderStoreLink(v) {
-  const url = location.origin + '/store.html';
+  const url = location.origin + '/';
   const shown = S().products.filter(p => p.showInStore !== false).length;
   v.innerHTML = `
   <div class="card glass">
     <h3>موقع عرض المنتجات للزبائن</h3>
     <p class="muted">صفحة عامة أنيقة تعرض منتجات الصيدلية وأسعارها وحالة التوفر، مع زر طلب عبر واتساب. لا تظهر فيها أسعار الشراء أو المبيعات.</p>
-    <div class="row"><input readonly value="${url}" id="surl" class="grow" style="direction:ltr"><button class="btn" id="copy">نسخ الرابط</button><a class="btn primary" href="store.html" target="_blank">${I.eye} فتح الموقع</a></div>
+    <div class="row"><input readonly value="${url}" id="surl" class="grow" style="direction:ltr"><button class="btn" id="copy">نسخ الرابط</button><a class="btn primary" href="/" target="_blank">${I.eye} فتح الموقع</a></div>
     <p class="small muted">${shown} منتج معروض حالياً. يمكنك إخفاء أي منتج من نموذج التعديل. عدّل رقم الواتساب ورسالة الترحيب من الإعدادات.</p>
   </div>
-  <div class="card glass" style="padding:0;overflow:hidden;height:70vh"><iframe src="store.html" style="width:100%;height:100%;border:0"></iframe></div>`;
+  <div class="card glass" style="padding:0;overflow:hidden;height:70vh"><iframe src="/" style="width:100%;height:100%;border:0"></iframe></div>`;
   $('#copy').onclick = () => { navigator.clipboard?.writeText(url); toast('تم نسخ الرابط'); };
 }
 
@@ -1344,6 +1353,27 @@ function renderSettings(v) {
 (async () => {
   DB.onAuthLost = () => { if (me) { me = null; toast('انتهت الجلسة — سجّل الدخول مجدداً', true); showLogin(); } };
   DB.onSaveError = msg => toast(msg, true);
+  // تحديث الشاشة عند وصول تغييرات من جهاز آخر (بدون مقاطعة المستخدم أثناء الكتابة أو داخل نافذة)
+  let remoteTimer = null;
+  DB.onRemoteChange = () => {
+    clearTimeout(remoteTimer);
+    remoteTimer = setTimeout(function refresh() {
+      if (!me) return;
+      const busy = $('#modal-root').children.length || ['INPUT', 'TEXTAREA', 'SELECT'].includes(document.activeElement?.tagName) || document.body.classList.contains('cart-open');
+      if (busy) { remoteTimer = setTimeout(refresh, 3000); return; }
+      me = S().users.find(u => u.id === me.id) || me;
+      applyTheme();
+      if (!can(current)) return go();
+      const y = window.scrollY;
+      $('#top-actions').innerHTML = ''; renderNav(); ROUTES[current].r($('#view'));
+      window.scrollTo(0, y);
+    }, 400);
+  };
+  DB.onStatus = st => {
+    const el = $('#sync-status'); if (!el) return;
+    el.textContent = !st.online ? '● وضع محلي' : st.offline ? `● غير متصل${st.pending ? ` — ${st.pending} بانتظار الحفظ` : ''}` : st.saving || st.pending ? '● جاري الحفظ…' : '● محفوظ على السحابة';
+    el.style.color = st.offline ? 'var(--danger)' : '';
+  };
   $('#menu-btn').innerHTML = I.menu;
   $('#menu-btn').onclick = () => setNav(true);
   $('#scrim').onclick = () => { setNav(false); setCart(false); };

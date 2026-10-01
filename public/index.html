@@ -4,57 +4,65 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="theme-color" content="#7c3aed">
-  <meta name="apple-mobile-web-app-capable" content="yes">
-  <meta name="mobile-web-app-capable" content="yes">
-  <meta name="apple-mobile-web-app-status-bar-style" content="default">
-  <meta name="apple-mobile-web-app-title" content="أيار">
-  <meta name="format-detection" content="telephone=no">
-  <title>أيار — إدارة الصيدلية</title>
+  <title>صيدلية أيار — منتجاتنا</title>
   <link rel="icon" href="favicon.svg" type="image/svg+xml">
   <link rel="apple-touch-icon" href="icons/icon-180.png">
-  <link rel="manifest" href="manifest.webmanifest">
-  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <meta name="apple-mobile-web-app-capable" content="yes">
   <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Arabic:wght@400;500;600;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="css/style.css">
+  <style>
+    .wrap { max-width: 1200px; margin: 0 auto; padding: 18px; display: flex; flex-direction: column; gap: 18px; }
+    .nav-top { display: flex; align-items: center; justify-content: space-between; padding: 12px 18px; position: sticky; top: 12px; z-index: 10; }
+    .hero { padding: 48px 28px; text-align: center; }
+    .hero h1 { font-size: clamp(28px, 5vw, 46px); margin: 0 0 8px; background: linear-gradient(135deg, var(--primary), var(--primary-2)); -webkit-background-clip: text; background-clip: text; color: transparent; }
+    .hero p { color: var(--muted); font-size: 18px; margin: 0 0 22px; }
+    .hero .input-icon { max-width: 520px; margin: 0 auto; }
+    .hero input { padding: 15px 44px 15px 16px; font-size: 16px; border-radius: 16px; }
+    .chips { display: flex; gap: 8px; overflow-x: auto; padding-bottom: 4px; }
+    .products { display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: 16px; }
+    .p-card { padding: 14px; display: flex; flex-direction: column; gap: 8px; transition: .25s; cursor: pointer; }
+    .p-card:hover { transform: translateY(-4px); }
+    .p-card .img { aspect-ratio: 1; border-radius: 16px; background: linear-gradient(135deg, var(--primary-soft), transparent); display: grid; place-items: center; overflow: hidden; font-size: 54px; font-weight: 700; color: var(--primary); }
+    .p-card .img img { width: 100%; height: 100%; object-fit: cover; }
+    .p-card b { font-size: 15.5px; }
+    .p-card .price { font-weight: 800; color: var(--primary); font-size: 18px; }
+    @media (max-width: 760px) {
+      .wrap { padding: 10px; gap: 12px; }
+      .nav-top { top: 8px; padding: 10px 12px; }
+      .hero { padding: 30px 16px; }
+      .hero p { font-size: 15px; }
+      .hero input { font-size: 16px; }
+      .products { grid-template-columns: repeat(2, 1fr); gap: 10px; }
+      .p-card { padding: 10px; gap: 6px; }
+      .p-card b { font-size: 14px; }
+      .p-card .price { font-size: 15px; }
+      .p-card .row { flex-direction: column; align-items: flex-start; gap: 6px; }
+      .modal-back { align-items: end; padding: 0; }
+      .modal, .modal.sm { width: 100%; border-radius: 26px 26px 0 0; padding-bottom: calc(20px + env(safe-area-inset-bottom)); }
+      .chips .btn { min-height: 40px; }
+    }
+    @media (min-width: 761px) and (max-width: 1180px) { .products { grid-template-columns: repeat(3, 1fr); } }
+    .foot { text-align: center; padding: 22px; color: var(--muted); }
+    .big-img { width: 100%; max-height: 320px; object-fit: contain; border-radius: 18px; background: var(--primary-soft); }
+  </style>
 </head>
 <body>
   <div class="bg-blobs"><span></span><span></span><span></span></div>
-
-  <div class="app hidden">
-    <aside class="sidebar glass" id="sidebar">
-      <div class="brand">
-        <div class="brand-logo">أ</div>
-        <div><b id="brand-name">أيار</b><small>إدارة الصيدلية</small></div>
-      </div>
-      <nav class="nav" id="nav"></nav>
-      <div class="spacer"></div>
-      <div id="user-box"></div>
-      <div class="small muted center" id="sync-status"></div>
-    </aside>
-
-    <main class="main">
-      <header class="topbar glass">
-        <div class="row">
-          <button class="btn icon ghost menu-btn" id="menu-btn" aria-label="القائمة"></button>
-          <div>
-            <h1 id="page-title">لوحة التحكم</h1>
-            <div class="sub" id="page-sub"></div>
-          </div>
-        </div>
-        <div class="row" id="top-actions"></div>
-      </header>
-      <section class="content" id="view"></section>
-    </main>
+  <div class="wrap">
+    <header class="nav-top glass">
+      <div class="brand" style="padding:0"><div class="brand-logo">أ</div><div><b id="s-name">صيدلية أيار</b><small id="s-addr"></small></div></div>
+      <a class="btn primary" id="s-call" href="#">اتصل بنا</a>
+    </header>
+    <section class="hero glass">
+      <h1 id="s-title">صيدلية أيار</h1>
+      <p id="s-note">صحتك أولويتنا 💜</p>
+      <div class="input-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg><input id="q" placeholder="ابحث عن دواء أو منتج…"></div>
+    </section>
+    <div class="chips" id="chips"></div>
+    <section class="products" id="grid"></section>
+    <footer class="foot glass" id="foot"></footer>
   </div>
-
-  <nav class="tabbar glass" id="tabbar"></nav>
-  <div class="scrim" id="scrim"></div>
   <div id="modal-root"></div>
-  <div class="toast-wrap" id="toasts"></div>
-  <div id="print-area"></div>
-
-  <script src="js/barcode.js"></script>
-  <script src="js/db.js"></script>
-  <script src="js/app.js"></script>
+  <script src="js/store.js"></script>
 </body>
 </html>

@@ -1,10 +1,21 @@
 {
   "name": "ayar-pharmacy",
   "version": "1.0.0",
-  "description": "أيار — نظام إدارة صيدلية: كاشير، جرد، باركود، دفعات بتواريخ صلاحية متعددة، وموقع عرض منتجات",
+  "description": "أيار — نظام إدارة صيدلية: كاشير، جرد، باركود، دفعات بتواريخ صلاحية متعددة، موردين، ديون، وموقع عرض منتجات. يعمل على Cloudflare Workers + D1",
   "main": "server.js",
   "scripts": {
-    "start": "node server.js"
+    "start": "node --no-warnings server.js",
+    "dev": "node --no-warnings --watch server.js",
+    "cf:dev": "wrangler dev",
+    "cf:deploy": "wrangler deploy",
+    "cf:db:create": "wrangler d1 create ayar-db"
   },
-  "license": "MIT"
+  "license": "MIT",
+  "type": "module",
+  "engines": {
+    "node": ">=22.13"
+  },
+  "devDependencies": {
+    "wrangler": "^4.146.0"
+  }
 }

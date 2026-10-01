@@ -1,0 +1,27 @@
+# إعدادات Cloudflare Workers لنظام أيار
+name = "ayar-pharmacy"
+main = "src/worker.js"
+compatibility_date = "2026-09-01"
+workers_dev = true
+
+[assets]
+directory = "./public"
+binding = "ASSETS"
+html_handling = "auto-trailing-slash"
+not_found_handling = "none"
+run_worker_first = ["/api/*"]
+
+[[d1_databases]]
+binding = "DB"
+database_name = "ayar-db"
+# ضع هنا المعرّف الذي يظهر بعد تنفيذ: npx wrangler d1 create ayar-db
+database_id = "00000000-0000-0000-0000-000000000000"
+
+# بعد ربط الدومين بـ Cloudflare فعّل هذه الأسطر:
+# routes = [
+#   { pattern = "ayarpharmacy.online", custom_domain = true },
+#   { pattern = "www.ayarpharmacy.online", custom_domain = true }
+# ]
+
+[observability]
+enabled = true

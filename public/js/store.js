@@ -21,7 +21,7 @@
   S.phone ? call.href = 'tel:' + S.phone : call.style.display = 'none';
   document.getElementById('foot').innerHTML = `© ${new Date().getFullYear()} ${esc(name)}${S.phone ? ' • ' + esc(S.phone) : ''}${S.address ? ' • ' + esc(S.address) : ''}`;
   const money = v => `${Number(v || 0).toLocaleString('en-US')} ${esc(S.currency || 'د.ع')}`;
-  const safeImg = v => (typeof v === 'string' && /^data:image\/(png|jpe?g|webp|gif);base64,[A-Za-z0-9+/=]+$/.test(v)) ? v : '';
+  const safeImg = v => (typeof v === 'string' && (/^data:image\/(png|jpe?g|webp|gif);base64,[A-Za-z0-9+/=]+$/.test(v) || /^\/api\/img\/[a-z0-9]+$/.test(v))) ? v : '';
   const wa = p => S.whatsapp ? `https://wa.me/${S.whatsapp.replace(/\D/g, '')}?text=${encodeURIComponent(`مرحباً، أريد طلب: ${p.name}`)}` : '';
 
   let cat = 'الكل', q = '';
