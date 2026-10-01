@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#7c3aed">
+  <title>صيدلية أيار — منتجاتنا</title>
+  <link rel="icon" href="favicon.svg" type="image/svg+xml">
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Arabic:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="css/style.css">
+  <style>
+    .wrap { max-width: 1200px; margin: 0 auto; padding: 18px; display: flex; flex-direction: column; gap: 18px; }
+    .nav-top { display: flex; align-items: center; justify-content: space-between; padding: 12px 18px; position: sticky; top: 12px; z-index: 10; }
+    .hero { padding: 48px 28px; text-align: center; }
+    .hero h1 { font-size: clamp(28px, 5vw, 46px); margin: 0 0 8px; background: linear-gradient(135deg, var(--primary), var(--primary-2)); -webkit-background-clip: text; background-clip: text; color: transparent; }
+    .hero p { color: var(--muted); font-size: 18px; margin: 0 0 22px; }
+    .hero .input-icon { max-width: 520px; margin: 0 auto; }
+    .hero input { padding: 15px 44px 15px 16px; font-size: 16px; border-radius: 16px; }
+    .chips { display: flex; gap: 8px; overflow-x: auto; padding-bottom: 4px; }
+    .products { display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: 16px; }
+    .p-card { padding: 14px; display: flex; flex-direction: column; gap: 8px; transition: .25s; cursor: pointer; }
+    .p-card:hover { transform: translateY(-4px); }
+    .p-card .img { aspect-ratio: 1; border-radius: 16px; background: linear-gradient(135deg, var(--primary-soft), transparent); display: grid; place-items: center; overflow: hidden; font-size: 54px; font-weight: 700; color: var(--primary); }
+    .p-card .img img { width: 100%; height: 100%; object-fit: cover; }
+    .p-card b { font-size: 15.5px; }
+    .p-card .price { font-weight: 800; color: var(--primary); font-size: 18px; }
+    .foot { text-align: center; padding: 22px; color: var(--muted); }
+    .big-img { width: 100%; max-height: 320px; object-fit: contain; border-radius: 18px; background: var(--primary-soft); }
+  </style>
+</head>
+<body>
+  <div class="bg-blobs"><span></span><span></span><span></span></div>
+  <div class="wrap">
+    <header class="nav-top glass">
+      <div class="brand" style="padding:0"><div class="brand-logo">أ</div><div><b id="s-name">صيدلية أيار</b><small id="s-addr"></small></div></div>
+      <a class="btn primary" id="s-call" href="#">اتصل بنا</a>
+    </header>
+    <section class="hero glass">
+      <h1 id="s-title">صيدلية أيار</h1>
+      <p id="s-note">صحتك أولويتنا 💜</p>
+      <div class="input-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg><input id="q" placeholder="ابحث عن دواء أو منتج…"></div>
+    </section>
+    <div class="chips" id="chips"></div>
+    <section class="products" id="grid"></section>
+    <footer class="foot glass" id="foot"></footer>
+  </div>
+  <div id="modal-root"></div>
+  <script>
+  (async () => {
+    const esc = v => String(v ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+    let data;
+    try { const r = await fetch('/api/store'); if (!r.ok) throw 0; data = await r.json(); }
+    catch {
+      // بدون خادم: اقرأ من بيانات المتصفح المحلية
+      const s = JSON.parse(localStorage.getItem('ayar-db-v1') || '{}'), t = new Date().toISOString().slice(0, 10);
+      data = { settings: s.settings || {}, categories: s.categories || [], products: (s.products || []).filter(p => p.showInStore !== false)
+        .map(p => ({ ...p, inStock: (p.batches || []).some(b => b.qty > 0 && (!b.expiry || b.expiry >= t)) })) };
+    }
+    const S = data.settings || {};
+    document.documentElement.dataset.theme = S.theme || 'violet';
+    const name = S.name || 'صيدلية أيار';
+    document.title = `${name} — منتجاتنا`;
+    document.getElementById('s-name').textContent = name;
+    document.getElementById('s-title').textContent = name;
+    document.getElementById('s-note').textContent = S.storeNote || 'صحتك أولويتنا 💜';
+    document.getElementById('s-addr').textContent = S.address || 'موقع عرض المنتجات';
+    const call = document.getElementById('s-call');
+    S.phone ? call.href = 'tel:' + S.phone : call.style.display = 'none';
+    document.getElementById('foot').innerHTML = `© ${new Date().getFullYear()} ${esc(name)}${S.phone ? ' • ' + esc(S.phone) : ''}${S.address ? ' • ' + esc(S.address) : ''}`;
+    const money = v => `${Number(v || 0).toLocaleString('en-US')} ${S.currency || 'د.ع'}`;
+    const wa = p => S.whatsapp ? `https://wa.me/${S.whatsapp.replace(/\D/g, '')}?text=${encodeURIComponent(`مرحباً، أريد طلب: ${p.name}`)}` : '';
+
+    let cat = 'الكل', q = '';
+    const cats = ['الكل', ...data.categories.filter(c => data.products.some(p => p.category === c))];
+    const chips = document.getElementById('chips'), grid = document.getElementById('grid');
+    const drawChips = () => {
+      chips.innerHTML = cats.map(c => `<button class="btn ${c === cat ? 'primary' : 'ghost glass'}" data-c="${esc(c)}">${esc(c)}</button>`).join('');
+      chips.querySelectorAll('[data-c]').forEach(b => b.onclick = () => { cat = b.dataset.c; drawChips(); draw(); });
+    };
+    const draw = () => {
+      const k = q.trim().toLowerCase();
+      const list = data.products.filter(p => (cat === 'الكل' || p.category === cat) && (!k || p.name.toLowerCase().includes(k) || (p.sci || '').toLowerCase().includes(k)));
+      grid.innerHTML = list.map(p => `<div class="p-card glass" data-id="${p.id}">
+        <div class="img">${p.image ? `<img src="${p.image}" alt="" loading="lazy">` : esc(p.name[0])}</div>
+        <span class="badge" style="align-self:flex-start">${esc(p.category)}</span>
+        <b>${esc(p.name)}</b><span class="small muted">${esc(p.sci)}</span>
+        <div class="row between"><span class="price">${money(p.price)}</span><span class="badge ${p.inStock ? 'ok' : 'danger'}">${p.inStock ? 'متوفر' : 'غير متوفر'}</span></div>
+      </div>`).join('') || '<div class="empty glass" style="grid-column:1/-1">لا توجد منتجات مطابقة</div>';
+      grid.querySelectorAll('[data-id]').forEach(c => c.onclick = () => show(data.products.find(p => p.id === c.dataset.id)));
+    };
+    const show = p => {
+      const back = document.createElement('div');
+      back.className = 'modal-back';
+      back.innerHTML = `<div class="modal glass sm">
+        ${p.image ? `<img class="big-img" src="${p.image}">` : ''}
+        <h2 style="margin:14px 0 4px">${esc(p.name)}</h2><div class="muted">${esc(p.sci)}</div>
+        <p>${esc(p.description) || ''}</p>
+        <div class="row between"><span style="font-size:24px;font-weight:800;color:var(--primary)">${money(p.price)}</span><span class="badge ${p.inStock ? 'ok' : 'danger'}">${p.inStock ? 'متوفر' : 'غير متوفر'}</span></div>
+        <div class="row" style="margin-top:16px">${wa(p) ? `<a class="btn primary grow" target="_blank" href="${wa(p)}">اطلب عبر واتساب</a>` : ''}<button class="btn ghost grow" id="cl">إغلاق</button></div></div>`;
+      back.onclick = e => { if (e.target === back || e.target.id === 'cl') back.remove(); };
+      document.getElementById('modal-root').appendChild(back);
+    };
+    document.getElementById('q').oninput = e => { q = e.target.value; draw(); };
+    drawChips(); draw();
+  })();
+  </script>
+</body>
+</html>

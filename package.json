@@ -1,0 +1,10 @@
+{
+  "name": "ayar-pharmacy",
+  "version": "1.0.0",
+  "description": "أيار — نظام إدارة صيدلية: كاشير، جرد، باركود، دفعات بتواريخ صلاحية متعددة، وموقع عرض منتجات",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "license": "MIT"
+}
