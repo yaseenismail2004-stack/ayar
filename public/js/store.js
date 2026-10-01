@@ -5,7 +5,7 @@
   try { const r = await fetch('/api/store'); if (!r.ok) throw 0; data = await r.json(); }
   catch {
     // بدون خادم: اقرأ من بيانات المتصفح المحلية
-    const s = JSON.parse(localStorage.getItem('ayar-db-v1') || '{}'), t = new Date().toISOString().slice(0, 10);
+    const s = JSON.parse(localStorage.getItem('ayar-db-v1') || '{}'), t = (d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`)(new Date());
     data = { settings: s.settings || {}, categories: s.categories || [], products: (s.products || []).filter(p => p.showInStore !== false)
       .map(p => ({ ...p, inStock: (p.batches || []).some(b => b.qty > 0 && (!b.expiry || b.expiry >= t)) })) };
   }

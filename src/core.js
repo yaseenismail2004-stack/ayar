@@ -175,7 +175,9 @@ async function push(db, me, changes) {
 }
 
 // ---------------- البيع (على الخادم لضمان صحة المخزون بين الأجهزة) ----------------
-const today = () => new Date().toISOString().slice(0, 10);
+// توقيت العراق (UTC+3، بدون توقيت صيفي) — خوادم Cloudflare تعمل بتوقيت UTC
+const TZ_OFFSET_MIN = 180;
+const today = () => new Date(Date.now() + TZ_OFFSET_MIN * 60000).toISOString().slice(0, 10);
 async function checkout(db, me, b) {
   const lines = Array.isArray(b.items) ? b.items.slice(0, 200) : [];
   if (!lines.length) fail(400, 'السلة فارغة');

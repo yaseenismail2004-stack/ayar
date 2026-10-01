@@ -28,7 +28,7 @@ const DB = (() => {
     };
   }
   function demo(s) {
-    const d = n => { const t = new Date(); t.setDate(t.getDate() + n); return t.toISOString().slice(0, 10); };
+    const d = n => { const t = new Date(); t.setDate(t.getDate() + n); return `${t.getFullYear()}-${String(t.getMonth() + 1).padStart(2, '0')}-${String(t.getDate()).padStart(2, '0')}`; };
     const mk = (name, sci, category, price, cost, barcode, batches) => ({
       id: uid(), name, sci, category, price, cost, barcode, unit: 'علبة', minStock: 5, description: '', image: '',
       showInStore: true, createdAt: new Date().toISOString(),
