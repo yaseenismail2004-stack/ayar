@@ -232,6 +232,21 @@ tbody tr:hover { background: var(--primary-soft); }
 .list-item { display: flex; align-items: center; gap: 12px; padding: 10px 0; border-bottom: 1px solid var(--line); }
 .list-item:last-child { border-bottom: none; }
 
+/* ---------- تسجيل الدخول ---------- */
+.login-wrap { min-height: 100vh; display: grid; place-items: center; padding: 20px; }
+.login-card { width: min(380px, 100%); padding: 32px 28px; text-align: center; animation: pop .35s cubic-bezier(.2,.9,.3,1.2); }
+.login-card .input-icon svg { right: 13px; }
+.login-card input { padding: 13px 40px 13px 14px; }
+
+/* ---------- كشف حساب ---------- */
+.balance { font-size: 26px; font-weight: 800; }
+.balance.due { color: var(--danger); }
+.balance.clear { color: var(--ok); }
+.pick-list { max-height: 220px; overflow: auto; border: 1px solid var(--line); border-radius: 12px; margin-top: 6px; background: var(--glass-strong); }
+.pick-list div { padding: 9px 12px; cursor: pointer; border-bottom: 1px solid var(--line); }
+.pick-list div:hover { background: var(--primary-soft); }
+.cust-chip { display: flex; align-items: center; gap: 8px; padding: 8px 10px; border-radius: 12px; background: var(--primary-soft); }
+
 /* ---------- طباعة ---------- */
 #print-area { display: none; }
 @media print {

@@ -12,7 +12,9 @@ const DB = (() => {
         expiryWarnDays: 90, lowStock: 5, storeNote: 'صحتك أولويتنا 💜', receiptFooter: 'شكراً لزيارتكم — نتمنى لكم الشفاء العاجل'
       },
       categories: ['أدوية', 'مضادات حيوية', 'مسكنات', 'فيتامينات', 'عناية بالبشرة', 'أطفال', 'مستلزمات طبية'],
-      products: [], sales: [], stocktakes: [], seq: { sale: 1 }
+      products: [], sales: [], stocktakes: [],
+      users: [], suppliers: [], purchases: [], supplierPayments: [], customers: [], customerPayments: [],
+      seq: { sale: 1, purchase: 1 }
     };
   }
 
@@ -50,8 +52,8 @@ const DB = (() => {
     // ترقية آمنة لأي حقول ناقصة
     const def = defaults();
     state.settings = { ...def.settings, ...state.settings };
-    for (const k of ['categories', 'products', 'sales', 'stocktakes']) state[k] = state[k] || def[k];
-    state.seq = state.seq || def.seq;
+    for (const k of ['categories', 'products', 'sales', 'stocktakes', 'users', 'suppliers', 'purchases', 'supplierPayments', 'customers', 'customerPayments']) state[k] = state[k] || def[k];
+    state.seq = { ...def.seq, ...(state.seq || {}) };
     return state;
   }
 
