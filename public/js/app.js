@@ -82,9 +82,11 @@ const $ = (s, r = document) => r.querySelector(s);
 const $$ = (s, r = document) => [...r.querySelectorAll(s)];
 const esc = v => String(v ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const S = () => DB.s;
+const finePointer = () => !window.matchMedia || matchMedia('(pointer: fine)').matches; // لا نفتح الكيبورد تلقائياً على اللمس
 const today = () => new Date().toISOString().slice(0, 10);
 const num = v => { const n = parseFloat(String(v).replace(/,/g, '')); return isNaN(n) ? 0 : n; };
-const money = v => `${Number(v || 0).toLocaleString('en-US', { maximumFractionDigits: 2 })} ${S().settings.currency}`;
+const money = v => `${Number(v || 0).toLocaleString('en-US', { maximumFractionDigits: 2 })} ${esc(S()?.settings.currency || '')}`;
+const safeImg = v => (typeof v === 'string' && /^data:image\/(png|jpe?g|webp|gif);base64,[A-Za-z0-9+/=]+$/.test(v)) ? v : '';
 const fmtDate = d => d ? new Date(d).toLocaleDateString('en-GB') : '—';
 const fmtDT = d => new Date(d).toLocaleString('en-GB', { dateStyle: 'short', timeStyle: 'short' });
 const daysTo = d => Math.ceil((new Date(d) - new Date(today())) / 864e5);
@@ -138,7 +140,7 @@ function alerts() {
   out.soon.sort((a, b) => a.d - b.d);
   return out;
 }
-const thumb = (p, cls = 'thumb') => p.image ? `<img class="${cls}" src="${p.image}" alt="">` : `<div class="${cls}">${esc((p.name || '؟')[0])}</div>`;
+const thumb = (p, cls = 'thumb') => safeImg(p?.image) ? `<img class="${cls}" src="${safeImg(p.image)}" alt="">` : `<div class="${cls}">${esc((p?.name || '؟')[0])}</div>`;
 
 // ---------- نافذة منبثقة ----------
 function modal(html, { size = '', onClose } = {}) {
@@ -151,7 +153,7 @@ function modal(html, { size = '', onClose } = {}) {
   $$('[data-close]', back).forEach(b => b.onclick = close);
   root.appendChild(back);
   const first = $('input[autofocus], input:not([type=hidden]):not([type=file]):not([type=checkbox])', back);
-  first && setTimeout(() => first.focus(), 50);
+  first && finePointer() && setTimeout(() => first.focus(), 50);
   return { el: back, close };
 }
 const modalHead = t => `<div class="modal-head"><h2>${t}</h2><button class="btn icon ghost" data-close>${I.x}</button></div>`;
@@ -235,7 +237,23 @@ function renderNav() {
     <div class="grow" style="min-width:0"><b style="font-size:14px">${esc(me.name)}</b><div class="small muted">${ROLES[me.role].t}</div></div>
     <button class="btn icon ghost sm" id="logout" title="تسجيل الخروج">${I.logout}</button></div>` : '';
   const lo = $('#logout'); lo && (lo.onclick = logout);
+  // شريط التبويبات السفلي للموبايل
+  const tabs = ['dashboard', 'pos', 'products', 'customers', 'sales', 'store'].filter(can).slice(0, 4);
+  $('#tabbar').innerHTML = tabs.map(k => `<a href="#${k}" class="${k === current ? 'active' : ''}">${ROUTES[k].i}<span>${({ dashboard: 'الرئيسية', pos: 'الكاشير', products: 'المنتجات', customers: 'الزبائن', sales: 'المبيعات', store: 'المتجر' })[k]}</span></a>`).join('')
+    + `<button id="tab-more" class="${tabs.includes(current) ? '' : 'active'}">${I.menu}<span>المزيد</span></button>`;
+  $('#tab-more').onclick = () => setNav(true);
 }
+function setNav(open) { $('#sidebar').classList.toggle('open', open); document.body.classList.toggle('nav-open', open); }
+function setCart(open) { $('#cart')?.classList.toggle('open', open); document.body.classList.toggle('cart-open', open); }
+// تسمية خلايا الجداول لعرضها كبطاقات على الموبايل
+let labelTimer = null;
+function labelTables() {
+  for (const t of $$('.table-wrap table')) {
+    const heads = $$('thead th', t).map(th => th.textContent.trim());
+    for (const tr of $$('tbody tr', t)) [...tr.children].forEach((td, i) => { if (!td.hasAttribute('data-label')) td.setAttribute('data-label', heads[i] || ''); });
+  }
+}
+new MutationObserver(() => { clearTimeout(labelTimer); labelTimer = setTimeout(labelTables, 30); }).observe(document.body, { childList: true, subtree: true });
 function go() {
   if (!me) return showLogin();
   current = (location.hash.slice(1) || 'dashboard');
@@ -245,48 +263,78 @@ function go() {
   $('#page-title').textContent = ROUTES[current].t;
   $('#page-sub').textContent = new Date().toLocaleDateString('ar-IQ', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
   $('#top-actions').innerHTML = '';
-  $('#sidebar').classList.remove('open');
+  setNav(false); setCart(false);
+  window.scrollTo(0, 0);
   ROUTES[current].r($('#view'));
 }
 
 // ---------- تسجيل الدخول ----------
+let pharmacyName = 'صيدلية أيار', firstRun = false;
 function showLogin() {
   $('.app').classList.add('hidden');
+  $('#view').innerHTML = ''; $('#modal-root').innerHTML = '';
   let el = $('#login');
   if (!el) { el = document.createElement('div'); el.id = 'login'; document.body.appendChild(el); }
-  el.innerHTML = `<div class="login-wrap"><form class="glass login-card" id="login-form">
+  el.innerHTML = `<div class="login-wrap"><form class="glass login-card" id="login-form" autocomplete="on">
     <div class="brand-logo" style="width:64px;height:64px;font-size:30px;margin:0 auto 12px;border-radius:20px">أ</div>
-    <h2 style="margin:0 0 4px">${esc(S().settings.name)}</h2><p class="muted" style="margin:0 0 20px">سجّل الدخول للمتابعة</p>
-    <div class="field input-icon">${I.user}<input id="l-user" placeholder="اسم المستخدم" autocomplete="username" autofocus></div>
+    <h2 style="margin:0 0 4px">${esc(pharmacyName)}</h2><p class="muted" style="margin:0 0 20px">سجّل الدخول للمتابعة</p>
+    <div class="field input-icon">${I.user}<input id="l-user" placeholder="اسم المستخدم" autocomplete="username" autocapitalize="none" autocorrect="off" spellcheck="false"></div>
     <div class="field input-icon">${I.lock}<input id="l-pass" type="password" placeholder="كلمة المرور" autocomplete="current-password"></div>
-    <button class="btn primary lg" style="width:100%">تسجيل الدخول</button>
-    <p class="small muted" id="l-hint" style="margin-bottom:0">${S().users.some(u => u.mustChange) ? 'أول دخول: المستخدم <b>admin</b> وكلمة المرور <b>1234</b>' : ''}</p>
+    <button class="btn primary lg" style="width:100%" id="l-btn">تسجيل الدخول</button>
+    <p class="small muted" style="margin-bottom:0">${firstRun ? 'أول دخول: المستخدم <b>admin</b> وكلمة المرور <b>1234</b>' : ''}</p>
+    ${DB.online ? '' : '<p class="small" style="color:var(--warn);margin-bottom:0">وضع محلي بدون خادم — البيانات في هذا المتصفح فقط</p>'}
   </form></div>`;
-  $('#l-user').focus();
-  $('#login-form').onsubmit = e => {
+  if (finePointer()) $('#l-user').focus();
+  $('#login-form').onsubmit = async e => {
     e.preventDefault();
-    const un = $('#l-user').value.trim().toLowerCase(), pw = $('#l-pass').value;
-    const u = S().users.find(x => x.username === un && x.active !== false);
-    if (!u || u.pass !== hashPass(un, pw)) { beep(false); return toast('اسم المستخدم أو كلمة المرور غير صحيحة', true); }
-    me = u; sessionStorage.setItem('ayar-user', u.id);
-    el.remove(); $('.app').classList.remove('hidden');
-    toast(`أهلاً ${u.name} 👋`);
-    if (u.mustChange) setTimeout(() => changePassword(true), 300);
-    go();
+    const un = $('#l-user').value.trim().toLowerCase(), pw = $('#l-pass').value, btn = $('#l-btn');
+    btn.disabled = true;
+    try {
+      let user;
+      if (DB.online) user = await DB.login(un, pw);
+      else {
+        user = S().users.find(x => x.username === un && x.active !== false);
+        if (!user || user.pass !== hashPass(un, pw)) throw new Error('اسم المستخدم أو كلمة المرور غير صحيحة');
+        sessionStorage.setItem('ayar-user', user.id);
+      }
+      await startSession(user);
+      toast(`أهلاً ${me.name} 👋`);
+    } catch (err) { beep(false); toast(err.message, true); $('#l-pass').select(); }
+    finally { btn.disabled = false; }
   };
 }
-function logout() { me = null; sessionStorage.removeItem('ayar-user'); cart = []; showLogin(); }
+async function startSession(user) {
+  if (DB.online) await DB.load();
+  me = S().users.find(x => x.id === user.id) || user;
+  applyTheme();
+  $('#login')?.remove(); $('.app').classList.remove('hidden');
+  go();
+  if (me.mustChange) setTimeout(() => changePassword(true), 300);
+}
+async function logout() {
+  await DB.flush();
+  await DB.logout();
+  me = null; cart = []; posCustomer = null; sessionStorage.removeItem('ayar-user');
+  showLogin();
+}
 function changePassword(forced = false) {
+  const needCurrent = !forced && !me.mustChange;
   const m = modal(`${modalHead('تغيير كلمة المرور')}
     ${forced ? '<p class="muted small">لأمان النظام، غيّر كلمة المرور الافتراضية.</p>' : ''}
-    <div class="field"><label>كلمة المرور الجديدة</label><input type="password" id="np1" autofocus></div>
-    <div class="field"><label>تأكيد كلمة المرور</label><input type="password" id="np2"></div>
+    ${needCurrent ? '<div class="field"><label>كلمة المرور الحالية</label><input type="password" id="np0" autocomplete="current-password"></div>' : ''}
+    <div class="field"><label>كلمة المرور الجديدة (6 أحرف على الأقل)</label><input type="password" id="np1" autocomplete="new-password"></div>
+    <div class="field"><label>تأكيد كلمة المرور</label><input type="password" id="np2" autocomplete="new-password"></div>
     <div class="row" style="justify-content:flex-end"><button class="btn ghost" data-close>لاحقاً</button><button class="btn primary" id="np-save">حفظ</button></div>`, { size: 'sm' });
-  $('#np-save', m.el).onclick = () => {
-    const a = $('#np1', m.el).value, b = $('#np2', m.el).value;
-    if (a.length < 4) return toast('كلمة المرور 4 أحرف على الأقل', true);
+  $('#np-save', m.el).onclick = async () => {
+    const a = $('#np1', m.el).value, b = $('#np2', m.el).value, cur = $('#np0', m.el)?.value || '';
+    if (a.length < 6) return toast('كلمة المرور 6 أحرف على الأقل', true);
     if (a !== b) return toast('كلمتا المرور غير متطابقتين', true);
-    me.pass = hashPass(me.username, a); delete me.mustChange; DB.save(); m.close(); toast('تم تغيير كلمة المرور');
+    if (['123456', '1234567', '12345678', 'password', 'admin1'].includes(a)) return toast('كلمة المرور سهلة جداً', true);
+    try {
+      if (DB.online) await DB.api('/api/password', { method: 'POST', body: { current: cur, password: a } });
+      else { if (needCurrent && me.pass !== hashPass(me.username, cur)) throw new Error('كلمة المرور الحالية غير صحيحة'); me.pass = hashPass(me.username, a); DB.save(); }
+      delete me.mustChange; m.close(); toast('تم تغيير كلمة المرور ✅');
+    } catch (e) { toast(e.message, true); }
   };
 }
 
@@ -349,10 +397,12 @@ function renderPOS(v) {
       <div class="pos-products" id="pos-grid"></div>
     </div>
     <div class="cart glass" id="cart"></div>
-  </div>`;
+  </div>
+  <button class="cart-fab" id="cart-fab"></button>`;
+  $('#cart-fab').onclick = () => setCart(true);
   const scan = $('#scan');
   scan.value = posQuery;
-  scan.focus();
+  if (finePointer()) scan.focus();
   scan.oninput = () => { posQuery = scan.value; drawGrid(); };
   scan.onkeydown = e => {
     if (e.key !== 'Enter') return;
@@ -392,7 +442,7 @@ function drawCart() {
   const sub = cart.reduce((s, l) => s + l.qty * l.price, 0);
   const total = Math.max(0, sub - discount);
   el.innerHTML = `
-    <h3 style="margin:0" class="row between"><span>السلة</span>${cart.length ? `<button class="btn sm danger" id="clear">${I.trash} تفريغ</button>` : ''}</h3>
+    <h3 style="margin:0" class="row between"><span>السلة</span><span class="row">${cart.length ? `<button class="btn sm danger" id="clear">${I.trash} تفريغ</button>` : ''}<button class="btn sm icon ghost cart-close" id="cart-close">${I.x}</button></span></h3>
     <div class="cart-items">${cart.map((l, i) => {
       const p = findProduct(l.id);
       return `<div class="cart-line">${thumb(p)}<div class="nm"><b>${esc(p.name)}</b><span class="small muted">${money(l.price)}</span></div>
@@ -419,6 +469,9 @@ function drawCart() {
     else l.qty = n;
     drawCart();
   });
+  $('#cart-close', el).onclick = () => setCart(false);
+  const fab = $('#cart-fab');
+  if (fab) { fab.innerHTML = `<span class="row">${I.cart}<span>السلة</span><span class="count">${cart.reduce((t, l) => t + l.qty, 0)}</span></span><span>${money(total)}</span>`; fab.style.visibility = cart.length ? 'visible' : 'hidden'; }
   const clr = $('#clear', el); clr && (clr.onclick = () => { cart = []; discount = 0; posCustomer = null; payMethod = 'نقد'; drawCart(); });
   $('#disc', el).onchange = e => { discount = num(e.target.value); drawCart(); };
   const cp = $('#cust-pick', el); cp && (cp.onclick = () => pickCustomer(c => { posCustomer = c; drawCart(); }));
@@ -472,6 +525,7 @@ function checkout(method, paidRaw) {
   s.sales.push(sale);
   DB.save();
   cart = []; discount = 0; posCustomer = null; payMethod = 'نقد';
+  setCart(false);
   const m = modal(`${modalHead('تم البيع بنجاح ✅')}
     <div class="center"><div class="muted">فاتورة رقم #${sale.no}${sale.customerName ? ` — ${esc(sale.customerName)}` : ''}</div><div style="font-size:34px;font-weight:800;color:var(--primary);margin:10px 0">${money(sale.total)}</div>
     ${paid > sale.total ? `<div>الباقي للزبون: <b>${money(paid - sale.total)}</b></div>` : ''}
@@ -1173,33 +1227,46 @@ function renderUsers(v) {
   $$('[data-edu]').forEach(b => b.onclick = () => userForm(S().users.find(u => u.id === b.dataset.edu), () => renderUsers(v)));
   $$('[data-delu]').forEach(b => b.onclick = () => {
     const u = S().users.find(x => x.id === b.dataset.delu);
-    confirmBox(`حذف المستخدم ${esc(u.name)}؟ (تبقى مبيعاته مسجّلة باسمه)`, () => { S().users = S().users.filter(x => x !== u); DB.save(); renderUsers(v); }, 'حذف');
+    confirmBox(`حذف المستخدم ${esc(u.name)}؟ (تبقى مبيعاته مسجّلة باسمه)`, async () => {
+      try {
+        if (DB.online) S().users = (await DB.api('/api/users/' + encodeURIComponent(u.id), { method: 'DELETE' })).users;
+        else { S().users = S().users.filter(x => x !== u); DB.save(); }
+        renderUsers(v);
+      } catch (e) { toast(e.message, true); }
+    }, 'حذف');
   });
 }
 function userForm(u, after) {
   const isNew = !u;
   const m = modal(`${modalHead(isNew ? 'مستخدم جديد' : 'تعديل مستخدم')}
-    <div class="field"><label>الاسم *</label><input id="u-n" value="${esc(u?.name)}" autofocus></div>
-    <div class="field"><label>اسم المستخدم (للدخول) *</label><input id="u-u" value="${esc(u?.username)}" style="direction:ltr" autocomplete="off"></div>
+    <div class="field"><label>الاسم *</label><input id="u-n" value="${esc(u?.name)}"></div>
+    <div class="field"><label>اسم المستخدم (للدخول) *</label><input id="u-u" value="${esc(u?.username)}" style="direction:ltr" autocomplete="off" autocapitalize="none" spellcheck="false"></div>
     <div class="field"><label>الصلاحية</label><select id="u-r" ${u?.id === me.id ? 'disabled' : ''}>${Object.entries(ROLES).map(([k, r]) => `<option value="${k}" ${(u?.role || 'cashier') === k ? 'selected' : ''}>${r.t}</option>`).join('')}</select></div>
-    <div class="field"><label>${isNew ? 'كلمة المرور *' : 'كلمة مرور جديدة (اتركها فارغة لعدم التغيير)'}</label><input id="u-p" type="password" autocomplete="new-password"></div>
+    <div class="field"><label>${isNew ? 'كلمة المرور * (6 أحرف على الأقل)' : 'كلمة مرور جديدة (اتركها فارغة لعدم التغيير)'}</label><input id="u-p" type="password" autocomplete="new-password"></div>
     ${u && u.id !== me.id ? `<label class="row" style="color:var(--text)"><input type="checkbox" id="u-a" style="width:auto" ${u.active !== false ? 'checked' : ''}> الحساب فعّال</label>` : ''}
     <div class="row" style="justify-content:flex-end;margin-top:12px"><button class="btn ghost" data-close>إلغاء</button><button class="btn primary" id="u-save">حفظ</button></div>`, { size: 'sm' });
-  $('#u-save', m.el).onclick = () => {
+  $('#u-save', m.el).onclick = async () => {
     const name = $('#u-n', m.el).value.trim(), username = $('#u-u', m.el).value.trim().toLowerCase(), pass = $('#u-p', m.el).value;
+    const role = $('#u-r', m.el).value, active = $('#u-a', m.el) ? $('#u-a', m.el).checked : true;
     if (!name || !username) return toast('أكمل الاسم واسم المستخدم', true);
-    if (!/^[a-z0-9._-]+$/.test(username)) return toast('اسم المستخدم: أحرف إنجليزية وأرقام فقط', true);
-    if (S().users.some(x => x.username === username && x !== u)) return toast('اسم المستخدم مستخدم مسبقاً', true);
-    if (isNew && pass.length < 4) return toast('كلمة المرور 4 أحرف على الأقل', true);
-    if (!isNew && pass && pass.length < 4) return toast('كلمة المرور 4 أحرف على الأقل', true);
-    const d = u || { id: DB.uid(), active: true };
-    const oldUser = d.username;
-    Object.assign(d, { name, username, role: u?.id === me.id ? u.role : $('#u-r', m.el).value });
-    if (pass) { d.pass = hashPass(username, pass); delete d.mustChange; }
-    else if (oldUser !== username) return toast('عند تغيير اسم المستخدم أدخل كلمة مرور جديدة', true);
-    const a = $('#u-a', m.el); if (a) d.active = a.checked;
-    if (isNew) S().users.push(d);
-    DB.save(); m.close(); toast('تم الحفظ'); renderNav(); after && after();
+    if (!/^[a-z0-9._-]{2,40}$/.test(username)) return toast('اسم المستخدم: أحرف إنجليزية وأرقام فقط', true);
+    if ((isNew || pass) && pass.length < 6) return toast('كلمة المرور 6 أحرف على الأقل', true);
+    try {
+      if (DB.online) {
+        const r = await DB.api('/api/users', { method: 'POST', body: { id: u?.id, name, username, role, active, password: pass } });
+        S().users = r.users;
+        me = S().users.find(x => x.id === me.id) || me;
+      } else {
+        if (S().users.some(x => x.username === username && x !== u)) throw new Error('اسم المستخدم مستخدم مسبقاً');
+        if (!isNew && !pass && u.username !== username) throw new Error('عند تغيير اسم المستخدم أدخل كلمة مرور جديدة');
+        const d = u || { id: DB.uid(), active: true };
+        Object.assign(d, { name, username, role: u?.id === me.id ? u.role : role, active: u?.id === me.id ? true : active });
+        if (pass) { d.pass = hashPass(username, pass); delete d.mustChange; }
+        if (isNew) S().users.push(d);
+        DB.save();
+      }
+      m.close(); toast('تم الحفظ'); renderNav(); after && after();
+    } catch (e) { toast(e.message, true); }
   };
 }
 
@@ -1267,26 +1334,36 @@ function renderSettings(v) {
   $('#imp').onchange = e => {
     const f = e.target.files[0]; if (!f) return;
     const r = new FileReader();
-    r.onload = () => { try { const d = JSON.parse(r.result); if (!d.settings || !d.products) throw 0; DB.replace(d); toast('تم الاستيراد'); setTimeout(() => location.reload(), 600); } catch { toast('ملف غير صالح', true); } };
+    r.onload = () => { try { const d = JSON.parse(r.result); if (!d.settings || !d.products) throw 0; DB.replace(d); DB.flush().then(() => { toast('تم الاستيراد'); setTimeout(() => location.reload(), 600); }); } catch { toast('ملف غير صالح', true); } };
     r.readAsText(f);
   };
-  $('#reset').onclick = () => confirmBox('سيتم حذف <b>جميع</b> البيانات (المنتجات، المبيعات، الجرد، الموردين، الزبائن والمستخدمين) ويعود حساب admin / 1234. هل أنت متأكد؟', () => { DB.reset(); sessionStorage.removeItem('ayar-user'); toast('تم التصفير'); setTimeout(() => location.reload(), 600); }, 'حذف الكل');
+  $('#reset').onclick = () => confirmBox('سيتم حذف <b>جميع</b> البيانات (المنتجات، المبيعات، الجرد، الموردين والزبائن). حسابات المستخدمين تبقى كما هي. هل أنت متأكد؟', async () => { DB.reset(); await DB.flush(); toast('تم التصفير'); setTimeout(() => location.reload(), 600); }, 'حذف الكل');
 }
 
 // ================= تشغيل =================
 (async () => {
+  DB.onAuthLost = () => { if (me) { me = null; toast('انتهت الجلسة — سجّل الدخول مجدداً', true); showLogin(); } };
+  DB.onSaveError = msg => toast(msg, true);
+  $('#menu-btn').innerHTML = I.menu;
+  $('#menu-btn').onclick = () => setNav(true);
+  $('#scrim').onclick = () => { setNav(false); setCart(false); };
+  window.addEventListener('hashchange', () => me && go());
+  const ping = await DB.detect();
+  $('#sync-status').textContent = DB.online ? '● متصل بالخادم' : '● وضع محلي';
+  if (DB.online) {
+    pharmacyName = ping.name || pharmacyName; firstRun = !!ping.firstRun;
+    const u = await DB.me();
+    return u ? startSession(u) : showLogin();
+  }
+  // وضع محلي (فتح الملف مباشرة بدون خادم)
   await DB.load();
   if (!S().users.length) {
     S().users.push({ id: DB.uid(), name: 'المدير', username: 'admin', pass: hashPass('admin', '1234'), role: 'admin', mustChange: true, active: true });
     DB.save();
   }
+  pharmacyName = S().settings.name; firstRun = S().users.some(u => u.mustChange);
   applyTheme();
-  $('#menu-btn').innerHTML = I.menu;
-  $('#menu-btn').onclick = () => $('#sidebar').classList.toggle('open');
-  $('#sync-status').textContent = DB.online ? '● متصل بالخادم' : '● وضع محلي';
-  const sid = sessionStorage.getItem('ayar-user');
-  me = S().users.find(u => u.id === sid && u.active !== false) || null;
-  window.addEventListener('hashchange', go);
-  go();
+  const local = S().users.find(u => u.id === sessionStorage.getItem('ayar-user') && u.active !== false);
+  local ? startSession(local) : showLogin();
 })();
 })();

@@ -6,6 +6,8 @@
   <meta name="theme-color" content="#7c3aed">
   <title>صيدلية أيار — منتجاتنا</title>
   <link rel="icon" href="favicon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="icons/icon-180.png">
+  <meta name="apple-mobile-web-app-capable" content="yes">
   <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Arabic:wght@400;500;600;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="css/style.css">
   <style>
@@ -24,6 +26,22 @@
     .p-card .img img { width: 100%; height: 100%; object-fit: cover; }
     .p-card b { font-size: 15.5px; }
     .p-card .price { font-weight: 800; color: var(--primary); font-size: 18px; }
+    @media (max-width: 760px) {
+      .wrap { padding: 10px; gap: 12px; }
+      .nav-top { top: 8px; padding: 10px 12px; }
+      .hero { padding: 30px 16px; }
+      .hero p { font-size: 15px; }
+      .hero input { font-size: 16px; }
+      .products { grid-template-columns: repeat(2, 1fr); gap: 10px; }
+      .p-card { padding: 10px; gap: 6px; }
+      .p-card b { font-size: 14px; }
+      .p-card .price { font-size: 15px; }
+      .p-card .row { flex-direction: column; align-items: flex-start; gap: 6px; }
+      .modal-back { align-items: end; padding: 0; }
+      .modal, .modal.sm { width: 100%; border-radius: 26px 26px 0 0; padding-bottom: calc(20px + env(safe-area-inset-bottom)); }
+      .chips .btn { min-height: 40px; }
+    }
+    @media (min-width: 761px) and (max-width: 1180px) { .products { grid-template-columns: repeat(3, 1fr); } }
     .foot { text-align: center; padding: 22px; color: var(--muted); }
     .big-img { width: 100%; max-height: 320px; object-fit: contain; border-radius: 18px; background: var(--primary-soft); }
   </style>
@@ -45,64 +63,6 @@
     <footer class="foot glass" id="foot"></footer>
   </div>
   <div id="modal-root"></div>
-  <script>
-  (async () => {
-    const esc = v => String(v ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-    let data;
-    try { const r = await fetch('/api/store'); if (!r.ok) throw 0; data = await r.json(); }
-    catch {
-      // بدون خادم: اقرأ من بيانات المتصفح المحلية
-      const s = JSON.parse(localStorage.getItem('ayar-db-v1') || '{}'), t = new Date().toISOString().slice(0, 10);
-      data = { settings: s.settings || {}, categories: s.categories || [], products: (s.products || []).filter(p => p.showInStore !== false)
-        .map(p => ({ ...p, inStock: (p.batches || []).some(b => b.qty > 0 && (!b.expiry || b.expiry >= t)) })) };
-    }
-    const S = data.settings || {};
-    document.documentElement.dataset.theme = S.theme || 'violet';
-    const name = S.name || 'صيدلية أيار';
-    document.title = `${name} — منتجاتنا`;
-    document.getElementById('s-name').textContent = name;
-    document.getElementById('s-title').textContent = name;
-    document.getElementById('s-note').textContent = S.storeNote || 'صحتك أولويتنا 💜';
-    document.getElementById('s-addr').textContent = S.address || 'موقع عرض المنتجات';
-    const call = document.getElementById('s-call');
-    S.phone ? call.href = 'tel:' + S.phone : call.style.display = 'none';
-    document.getElementById('foot').innerHTML = `© ${new Date().getFullYear()} ${esc(name)}${S.phone ? ' • ' + esc(S.phone) : ''}${S.address ? ' • ' + esc(S.address) : ''}`;
-    const money = v => `${Number(v || 0).toLocaleString('en-US')} ${S.currency || 'د.ع'}`;
-    const wa = p => S.whatsapp ? `https://wa.me/${S.whatsapp.replace(/\D/g, '')}?text=${encodeURIComponent(`مرحباً، أريد طلب: ${p.name}`)}` : '';
-
-    let cat = 'الكل', q = '';
-    const cats = ['الكل', ...data.categories.filter(c => data.products.some(p => p.category === c))];
-    const chips = document.getElementById('chips'), grid = document.getElementById('grid');
-    const drawChips = () => {
-      chips.innerHTML = cats.map(c => `<button class="btn ${c === cat ? 'primary' : 'ghost glass'}" data-c="${esc(c)}">${esc(c)}</button>`).join('');
-      chips.querySelectorAll('[data-c]').forEach(b => b.onclick = () => { cat = b.dataset.c; drawChips(); draw(); });
-    };
-    const draw = () => {
-      const k = q.trim().toLowerCase();
-      const list = data.products.filter(p => (cat === 'الكل' || p.category === cat) && (!k || p.name.toLowerCase().includes(k) || (p.sci || '').toLowerCase().includes(k)));
-      grid.innerHTML = list.map(p => `<div class="p-card glass" data-id="${p.id}">
-        <div class="img">${p.image ? `<img src="${p.image}" alt="" loading="lazy">` : esc(p.name[0])}</div>
-        <span class="badge" style="align-self:flex-start">${esc(p.category)}</span>
-        <b>${esc(p.name)}</b><span class="small muted">${esc(p.sci)}</span>
-        <div class="row between"><span class="price">${money(p.price)}</span><span class="badge ${p.inStock ? 'ok' : 'danger'}">${p.inStock ? 'متوفر' : 'غير متوفر'}</span></div>
-      </div>`).join('') || '<div class="empty glass" style="grid-column:1/-1">لا توجد منتجات مطابقة</div>';
-      grid.querySelectorAll('[data-id]').forEach(c => c.onclick = () => show(data.products.find(p => p.id === c.dataset.id)));
-    };
-    const show = p => {
-      const back = document.createElement('div');
-      back.className = 'modal-back';
-      back.innerHTML = `<div class="modal glass sm">
-        ${p.image ? `<img class="big-img" src="${p.image}">` : ''}
-        <h2 style="margin:14px 0 4px">${esc(p.name)}</h2><div class="muted">${esc(p.sci)}</div>
-        <p>${esc(p.description) || ''}</p>
-        <div class="row between"><span style="font-size:24px;font-weight:800;color:var(--primary)">${money(p.price)}</span><span class="badge ${p.inStock ? 'ok' : 'danger'}">${p.inStock ? 'متوفر' : 'غير متوفر'}</span></div>
-        <div class="row" style="margin-top:16px">${wa(p) ? `<a class="btn primary grow" target="_blank" href="${wa(p)}">اطلب عبر واتساب</a>` : ''}<button class="btn ghost grow" id="cl">إغلاق</button></div></div>`;
-      back.onclick = e => { if (e.target === back || e.target.id === 'cl') back.remove(); };
-      document.getElementById('modal-root').appendChild(back);
-    };
-    document.getElementById('q').oninput = e => { q = e.target.value; draw(); };
-    drawChips(); draw();
-  })();
-  </script>
+  <script src="js/store.js"></script>
 </body>
 </html>

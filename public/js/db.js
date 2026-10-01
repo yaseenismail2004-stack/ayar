@@ -1,9 +1,11 @@
-// طبقة البيانات: تحفظ على الخادم (data/db.json) وإن لم يتوفر خادم تحفظ محلياً في المتصفح
+// طبقة البيانات: تحفظ على الخادم (data/db.json) بجلسة مصادقة، وإن لم يتوفر خادم تحفظ محلياً في المتصفح
 const DB = (() => {
-  const LS_KEY = 'ayar-db-v1';
-  let state = null, useServer = false, saveTimer = null;
+  const LS_KEY = 'ayar-db-v1', TOKEN_KEY = 'ayar-token';
+  let state = null, useServer = false, saveTimer = null, saving = Promise.resolve();
+  let onAuthLost = () => {}, onSaveError = () => {};
 
   const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
+  const token = () => sessionStorage.getItem(TOKEN_KEY) || '';
 
   function defaults() {
     return {
@@ -36,19 +38,51 @@ const DB = (() => {
     return s;
   }
 
+  // طلب للخادم مع رمز الجلسة
+  async function api(path, { method = 'GET', body } = {}) {
+    const headers = {};
+    if (token()) headers.Authorization = 'Bearer ' + token();
+    if (body !== undefined) headers['Content-Type'] = 'application/json';
+    const r = await fetch(path, { method, headers, body: body === undefined ? undefined : JSON.stringify(body), cache: 'no-store' });
+    let data = {};
+    try { data = await r.json(); } catch {}
+    if (r.status === 401 && path !== '/api/login') { sessionStorage.removeItem(TOKEN_KEY); onAuthLost(); }
+    if (!r.ok) { const e = new Error(data.error || 'خطأ في الاتصال'); e.status = r.status; throw e; }
+    return data;
+  }
+
+  // هل الخادم متاح؟
+  async function detect() {
+    try { const r = await fetch('/api/ping', { cache: 'no-store' }); useServer = r.ok; return r.ok ? await r.json() : null; }
+    catch { useServer = false; return null; }
+  }
+
+  async function login(username, password) {
+    const r = await api('/api/login', { method: 'POST', body: { username, password } });
+    sessionStorage.setItem(TOKEN_KEY, r.token);
+    return r.user;
+  }
+  async function logout() {
+    if (useServer && token()) { try { await api('/api/logout', { method: 'POST', body: {} }); } catch {} }
+    sessionStorage.removeItem(TOKEN_KEY);
+    if (useServer) state = null; // لا تُبقِ بيانات الصيدلية في الذاكرة بعد الخروج
+  }
+  async function me() {
+    if (!useServer || !token()) return null;
+    try { return (await api('/api/me')).user; } catch { return null; }
+  }
+
   async function load() {
-    try {
-      const r = await fetch('/api/state', { cache: 'no-store' });
-      if (r.ok) {
-        useServer = true;
-        const data = await r.json();
-        state = data && data.settings ? data : null;
-      }
-    } catch { useServer = false; }
-    if (!state) {
+    state = null;
+    if (useServer) {
+      const data = await api('/api/state');
+      const users = data.users || [];
+      state = data && data.settings ? data : null;
+      if (!state) { state = demo(defaults()); state.users = users; persist(true); }
+    } else {
       try { state = JSON.parse(localStorage.getItem(LS_KEY)); } catch { state = null; }
+      if (!state || !state.settings) { state = demo(defaults()); persist(true); }
     }
-    if (!state || !state.settings) { state = demo(defaults()); persist(true); }
     // ترقية آمنة لأي حقول ناقصة
     const def = defaults();
     state.settings = { ...def.settings, ...state.settings };
@@ -59,23 +93,28 @@ const DB = (() => {
 
   function persist(now = false) {
     clearTimeout(saveTimer);
-    const run = async () => {
-      try { localStorage.setItem(LS_KEY, JSON.stringify(state)); } catch {}
-      if (useServer) {
-        try {
-          await fetch('/api/state', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(state) });
-        } catch { console.warn('تعذر الحفظ على الخادم'); }
-      }
+    const run = () => {
+      if (!state) return;
+      if (!useServer) { try { localStorage.setItem(LS_KEY, JSON.stringify(state)); } catch { onSaveError('مساحة التخزين في المتصفح ممتلئة'); } return; }
+      const snapshot = JSON.stringify(state);
+      saving = saving.then(() => fetch('/api/state', { method: 'PUT', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token() }, body: snapshot })
+        .then(r => { if (r.status === 401) { sessionStorage.removeItem(TOKEN_KEY); onAuthLost(); } else if (!r.ok) onSaveError('تعذر الحفظ على الخادم'); })
+        .catch(() => onSaveError('انقطع الاتصال بالخادم — لم تُحفظ آخر التغييرات')));
     };
     now ? run() : (saveTimer = setTimeout(run, 400));
   }
+  // حفظ فوري قبل إغلاق الصفحة
+  window.addEventListener('pagehide', () => { if (saveTimer) persist(true); });
 
   return {
-    load, uid,
+    load, uid, detect, login, logout, me, api,
     get s() { return state; },
     save: () => persist(),
-    replace(newState) { state = newState; persist(true); },
-    reset() { state = defaults(); persist(true); },
-    get online() { return useServer; }
+    flush: () => { persist(true); return saving; },
+    replace(newState) { const users = state?.users || []; state = { ...newState, users }; persist(true); },
+    reset() { const users = state?.users || []; state = defaults(); state.users = users; persist(true); },
+    get online() { return useServer; },
+    set onAuthLost(fn) { onAuthLost = fn; },
+    set onSaveError(fn) { onSaveError = fn; }
   };
 })();
