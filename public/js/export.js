@@ -152,7 +152,13 @@ ${merges.length ? `<mergeCells count="${merges.length}">${merges.map(m => `<merg
   // report: { title, subtitle, brand: {name, sub}, currency, blocks: [...] }
   // blocks: {kind:'kpis', items:[{label,value,delta,tone}]} | {kind:'chart', title, html} | {kind:'row', items:[{title, html}]}
   //         {kind:'table', title, columns, rows, total} | {kind:'note', html}
+  // شعار الصيدلية كـ data URL (يُحمّل مرة واحدة) حتى يظهر داخل صفحات PDF
+  let logoP = null;
+  const logoUrl = () => logoP || (logoP = fetch('brand/logo-192.png').then(r => r.ok ? r.blob() : null)
+    .then(b => b && new Promise(res => { const fr = new FileReader(); fr.onload = () => res(fr.result); fr.onerror = () => res(null); fr.readAsDataURL(b); }))
+    .catch(() => null));
   async function buildPages(report, onProgress) {
+    const logo = await logoUrl();
     const host = document.createElement('div');
     host.className = 'pdf-host'; host.setAttribute('aria-hidden', 'true');
     document.body.appendChild(host);
@@ -160,7 +166,7 @@ ${merges.length ? `<mergeCells count="${merges.length}">${merges.map(m => `<merg
     const newPage = () => {
       const pg = document.createElement('div');
       pg.className = 'pdf-page'; pg.dir = 'rtl';
-      pg.innerHTML = `<div class="pdf-head"><div class="pdf-brand"><div class="pdf-logo">أ</div><div><b>${hesc(report.brand?.name)}</b><small>${hesc(report.brand?.sub || '')}</small></div></div>
+      pg.innerHTML = `<div class="pdf-head"><div class="pdf-brand">${logo ? `<img class="pdf-logo" src="${logo}" alt="">` : '<div class="pdf-logo">أ</div>'}<div><b>${hesc(report.brand?.name)}</b><small>${hesc(report.brand?.sub || '')}</small></div></div>
         <div class="pdf-title"><b>${hesc(report.title)}</b><small>${hesc(report.subtitle || '')}</small></div></div>
         <div class="pdf-body"></div><div class="pdf-foot"><span>${hesc(report.footer || '')}</span><span class="pdf-pn"></span></div>`;
       host.appendChild(pg); pages.push(pg); return pg.querySelector('.pdf-body');

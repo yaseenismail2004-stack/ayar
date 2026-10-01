@@ -289,7 +289,7 @@ function showLogin() {
   let el = $('#login');
   if (!el) { el = document.createElement('div'); el.id = 'login'; document.body.appendChild(el); }
   el.innerHTML = `<div class="login-wrap"><form class="glass login-card" id="login-form" autocomplete="on">
-    <div class="brand-logo" style="width:64px;height:64px;font-size:30px;margin:0 auto 12px;border-radius:20px">أ</div>
+    <img class="brand-logo login-logo" src="brand/logo-192.png" alt="شعار أيار" width="88" height="88">
     <h2 style="margin:0 0 4px">${esc(pharmacyName)}</h2><p class="muted" style="margin:0 0 20px">سجّل الدخول للمتابعة</p>
     <div class="field input-icon">${I.user}<input id="l-user" placeholder="اسم المستخدم" autocomplete="username" autocapitalize="none" autocorrect="off" spellcheck="false"></div>
     <div class="field input-icon">${I.lock}<input id="l-pass" type="password" placeholder="كلمة المرور" autocomplete="current-password"></div>

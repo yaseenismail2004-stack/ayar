@@ -5,7 +5,8 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="theme-color" content="#7c3aed">
   <title>صيدلية أيار — منتجاتنا</title>
-  <link rel="icon" href="favicon.svg" type="image/svg+xml">
+  <link rel="icon" href="favicon-64.png" type="image/png" sizes="64x64">
+  <link rel="icon" href="favicon-32.png" type="image/png" sizes="32x32">
   <link rel="apple-touch-icon" href="icons/icon-180.png">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <link rel="preload" href="fonts/plex-arabic-400.woff2" as="font" type="font/woff2" crossorigin>
@@ -15,6 +16,9 @@
     .nav-top { display: flex; align-items: center; justify-content: space-between; padding: 12px 18px; position: sticky; top: 12px; z-index: 10; }
     .hero { padding: 48px 28px; text-align: center; }
     .hero h1 { font-size: clamp(28px, 5vw, 46px); margin: 0 0 8px; background: linear-gradient(135deg, var(--primary), var(--primary-2)); -webkit-background-clip: text; background-clip: text; color: transparent; }
+    .hero-logo { width: 120px; height: 120px; display: block; margin: 0 auto 10px; filter: drop-shadow(0 14px 26px rgba(124, 58, 237, .32)); animation: float 6s ease-in-out infinite; }
+    @keyframes float { 50% { transform: translateY(-6px) rotate(4deg); } }
+    @media (prefers-reduced-motion: reduce) { .hero-logo { animation: none; } }
     .hero p { color: var(--muted); font-size: 18px; margin: 0 0 22px; }
     .hero .input-icon { max-width: 520px; margin: 0 auto; }
     .hero input { padding: 15px 44px 15px 16px; font-size: 16px; border-radius: 16px; }
@@ -31,6 +35,7 @@
       .nav-top { top: 8px; padding: 10px 12px; }
       .hero { padding: 30px 16px; }
       .hero p { font-size: 15px; }
+      .hero-logo { width: 88px; height: 88px; }
       .hero input { font-size: 16px; }
       .products { grid-template-columns: repeat(2, 1fr); gap: 10px; }
       .p-card { padding: 10px; gap: 6px; }
@@ -51,10 +56,11 @@
   <div class="bg-blobs"><span></span><span></span><span></span></div>
   <div class="wrap">
     <header class="nav-top glass">
-      <div class="brand" style="padding:0"><div class="brand-logo">أ</div><div><b id="s-name">صيدلية أيار</b><small id="s-addr"></small></div></div>
+      <div class="brand" style="padding:0"><img class="brand-logo" src="brand/logo-192.png" alt="شعار أيار" width="44" height="44"><div><b id="s-name">صيدلية أيار</b><small id="s-addr"></small></div></div>
       <a class="btn primary" id="s-call" href="#">اتصل بنا</a>
     </header>
     <section class="hero glass">
+      <img class="hero-logo" src="brand/logo-512.png" alt="" width="120" height="120">
       <h1 id="s-title">صيدلية أيار</h1>
       <p id="s-note">صحتك أولويتنا 💜</p>
       <div class="input-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg><input id="q" placeholder="ابحث عن دواء أو منتج…"></div>
