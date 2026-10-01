@@ -8,7 +8,7 @@
   <link rel="icon" href="favicon.svg" type="image/svg+xml">
   <link rel="apple-touch-icon" href="icons/icon-180.png">
   <meta name="apple-mobile-web-app-capable" content="yes">
-  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Arabic:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="preload" href="fonts/plex-arabic-400.woff2" as="font" type="font/woff2" crossorigin>
   <link rel="stylesheet" href="css/style.css">
   <style>
     .wrap { max-width: 1200px; margin: 0 auto; padding: 18px; display: flex; flex-direction: column; gap: 18px; }
@@ -41,7 +41,8 @@
       .modal, .modal.sm { width: 100%; border-radius: 26px 26px 0 0; padding-bottom: calc(20px + env(safe-area-inset-bottom)); }
       .chips .btn { min-height: 40px; }
     }
-    @media (min-width: 761px) and (max-width: 1180px) { .products { grid-template-columns: repeat(3, 1fr); } }
+    @media (min-width: 761px) and (max-width: 1000px) { .products { grid-template-columns: repeat(3, 1fr); } }
+    @media (min-width: 1001px) and (max-width: 1280px) { .products { grid-template-columns: repeat(4, 1fr); } }
     .foot { text-align: center; padding: 22px; color: var(--muted); }
     .big-img { width: 100%; max-height: 320px; object-fit: contain; border-radius: 18px; background: var(--primary-soft); }
   </style>

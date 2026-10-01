@@ -261,7 +261,7 @@ function go() {
   if (!can(current)) { current = Object.keys(ROUTES).find(can); if (location.hash.slice(1) !== current) return void (location.hash = current); }
   renderNav();
   $('#page-title').textContent = ROUTES[current].t;
-  $('#page-sub').textContent = new Date().toLocaleDateString('ar-IQ', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
+  $('#page-sub').textContent = new Date().toLocaleDateString('ar-IQ', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric', numberingSystem: 'latn' });
   $('#top-actions').innerHTML = '';
   setNav(false); setCart(false);
   window.scrollTo(0, 0);
@@ -396,7 +396,7 @@ function renderPOS(v) {
           <div class="input-icon grow scan-box">${I.barcode}<input id="scan" placeholder="امسح الباركود أو اكتب اسم المنتج ثم Enter" autocomplete="off"></div>
           <button class="btn lg" id="cam">${I.camera}</button>
         </div>
-        <div class="row" style="margin-top:12px">${cats.map(c => `<button class="btn sm ${c === posCat ? 'primary' : 'ghost'}" data-cat="${esc(c)}">${esc(c)}</button>`).join('')}</div>
+        <div class="row cat-row" style="margin-top:12px">${cats.map(c => `<button class="btn sm ${c === posCat ? 'primary' : 'ghost'}" data-cat="${esc(c)}">${esc(c)}</button>`).join('')}</div>
       </div>
       <div class="pos-products" id="pos-grid"></div>
     </div>
@@ -610,24 +610,24 @@ function drawProducts() {
     if (prodFilter === 'expired') return p.batches.some(b => b.qty > 0 && b.expiry && daysTo(b.expiry) < 0);
     return true;
   });
-  $('#ptable').innerHTML = list.length ? `<table><thead><tr><th></th><th>المنتج</th><th>الباركود</th><th>الصنف</th><th>السعر</th><th>الكمية</th><th>الدفعات / التواريخ</th><th></th></tr></thead><tbody>
+  $('#ptable').innerHTML = list.length ? `<table><thead><tr><th></th><th>المنتج</th><th class="col-code">الباركود</th><th>الصنف</th><th>السعر</th><th>الكمية</th><th>الدفعات / التواريخ</th><th></th></tr></thead><tbody>
     ${list.map(p => {
       const total = stockOf(p), sellable = sellableQty(p), low = sellable <= (p.minStock ?? S().settings.lowStock);
       return `<tr>
         <td>${thumb(p)}</td>
         <td><b>${esc(p.name)}</b><div class="small muted">${esc(p.sci)}</div></td>
-        <td class="small" style="font-family:monospace">${esc(p.barcode) || '—'}</td>
+        <td class="small col-code" style="font-family:monospace">${esc(p.barcode) || '—'}</td>
         <td><span class="badge">${esc(p.category)}</span></td>
-        <td><b>${money(p.price)}</b></td>
+        <td style="white-space:nowrap"><b>${money(p.price)}</b></td>
         <td><span class="badge ${low ? (sellable ? 'warn' : 'danger') : 'ok'}">${total}</span></td>
         <td>${p.batches.filter(b => b.qty > 0).map(b => { const e = expiryState(b.expiry); return `<span class="badge ${e.cls}" title="الدفعة ${esc(b.batchNo)}" style="margin:2px">${b.qty} • ${b.expiry ? fmtDate(b.expiry) : 'بدون'}</span>`; }).join('') || '<span class="muted small">لا يوجد</span>'}</td>
-        <td><div class="row" style="flex-wrap:nowrap">
+        <td><div class="row acts" style="flex-wrap:nowrap">
           <button class="btn sm icon" data-edit="${p.id}" title="تعديل">${I.edit}</button>
-          <button class="btn sm icon" data-label="${p.id}" title="طباعة باركود">${I.barcode}</button>
+          <button class="btn sm icon" data-plabel="${p.id}" title="طباعة باركود">${I.barcode}</button>
           <button class="btn sm icon danger" data-del="${p.id}" title="حذف">${I.trash}</button></div></td></tr>`;
     }).join('')}</tbody></table>` : `<div class="empty">${I.box}<div>لا توجد منتجات مطابقة</div></div>`;
   $$('[data-edit]').forEach(b => b.onclick = () => productForm(findProduct(b.dataset.edit)));
-  $$('[data-label]').forEach(b => b.onclick = () => printLabels(findProduct(b.dataset.label)));
+  $$('[data-plabel]').forEach(b => b.onclick = () => printLabels(findProduct(b.dataset.plabel)));
   $$('[data-del]').forEach(b => b.onclick = () => {
     const p = findProduct(b.dataset.del);
     confirmBox(`هل تريد حذف <b>${esc(p.name)}</b> نهائياً؟`, () => { S().products = S().products.filter(x => x !== p); DB.save(); drawProducts(); toast('تم الحذف'); }, 'حذف');
@@ -668,7 +668,7 @@ function productForm(p = null, presetCode = '') {
       <div class="field"><label>سعر البيع *</label><input id="f-price" inputmode="decimal" value="${esc(d.price)}"></div>
       <div class="field"><label>سعر الشراء</label><input id="f-cost" inputmode="decimal" value="${esc(d.cost)}"></div>
       <div class="field"><label>الحد الأدنى للتنبيه</label><input id="f-min" inputmode="numeric" value="${esc(d.minStock)}"></div>
-      <div class="field"><label>صورة المنتج</label><input type="file" id="f-img" accept="image/*"></div>
+      <div class="field"><label>صورة المنتج</label><div class="row img-pick"><span class="img-thumb" id="f-img-thumb">${d.image ? `<img src="${esc(d.image)}" alt="">` : I.camera}</span><label class="btn grow" style="margin:0;color:var(--primary)">${I.upload} <span id="f-img-label">${d.image ? 'تغيير الصورة' : 'اختيار صورة'}</span><input type="file" id="f-img" accept="image/*" hidden></label></div></div>
     </div>
     <div class="field"><label>الوصف (يظهر في موقع العرض)</label><textarea id="f-desc">${esc(d.description)}</textarea></div>
     <label class="row" style="color:var(--text);margin-bottom:16px"><input type="checkbox" id="f-store" style="width:auto" ${d.showInStore !== false ? 'checked' : ''}> عرض المنتج في موقع العرض للزبائن</label>
@@ -682,7 +682,7 @@ function productForm(p = null, presetCode = '') {
 
   const preview = () => {
     const code = bc.value.trim();
-    $('#code-preview', el).innerHTML = code ? `<div class="barcode-box">${Barcode.svg(code, { height: 50, module: 1.6 })}</div>` : '<div class="muted small">معاينة الباركود</div>';
+    $('#code-preview', el).innerHTML = code ? `<div class="barcode-box">${Barcode.svg(code, { height: 50, module: 1.6 })}</div>` : '';
     const dup = code && S().products.find(x => x.barcode === code && x.id !== d.id);
     $('#code-warn', el).innerHTML = dup ? `<span style="color:var(--warn)">⚠ هذا الرمز مسجّل لـ <b>${esc(dup.name)}</b></span> <button class="btn sm" id="open-dup">إضافة دفعة له</button>` : '';
     const od = $('#open-dup', el);
@@ -721,7 +721,7 @@ function productForm(p = null, presetCode = '') {
   };
   drawBatches();
 
-  $('#f-img', el).onchange = async e => { const f = e.target.files[0]; if (f) { d.image = await compressImage(f); toast('تم تحميل الصورة'); } };
+  $('#f-img', el).onchange = async e => { const f = e.target.files[0]; if (f) { d.image = await compressImage(f); $('#f-img-thumb', el).innerHTML = `<img src="${esc(d.image)}" alt="">`; $('#f-img-label', el).textContent = 'تغيير الصورة'; toast('تم تحميل الصورة'); } };
 
   $('#save', el).onclick = () => {
     const name = $('#f-name', el).value.trim(), price = num($('#f-price', el).value);
@@ -1379,7 +1379,9 @@ function renderSettings(v) {
   $('#scrim').onclick = () => { setNav(false); setCart(false); };
   window.addEventListener('hashchange', () => me && go());
   const ping = await DB.detect();
-  $('#sync-status').textContent = DB.online ? '● متصل بالخادم' : '● وضع محلي';
+  const ss = $('#sync-status');
+  ss.innerHTML = `<i class="dot"></i>${DB.online ? 'متصل بالخادم' : 'وضع محلي (غير متصل)'}`;
+  ss.classList.toggle('offline', !DB.online);
   if (DB.online) {
     pharmacyName = ping.name || pharmacyName; firstRun = !!ping.firstRun;
     const u = await DB.me();
