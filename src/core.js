@@ -12,7 +12,7 @@ export const SECURITY_HEADERS = {
   'X-Content-Type-Options': 'nosniff',
   'Referrer-Policy': 'same-origin',
   'Permissions-Policy': 'camera=(self), microphone=(), geolocation=()',
-  'Content-Security-Policy': "default-src 'self'; script-src 'self' https://unpkg.com; style-src 'self' 'unsafe-inline'; font-src 'self'; img-src 'self' data: blob:; media-src 'self' blob:; connect-src 'self'; frame-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'"
+  'Content-Security-Policy': "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self'; img-src 'self' data: blob:; media-src 'self' blob:; connect-src 'self'; frame-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'"
 };
 
 // ---------------- أدوات ----------------
@@ -182,6 +182,25 @@ async function checkout(db, me, b) {
   const lines = Array.isArray(b.items) ? b.items.slice(0, 200) : [];
   if (!lines.length) fail(400, 'السلة فارغة');
   const discount = Math.max(0, +b.discount || 0), method = ['نقد', 'بطاقة', 'آجل'].includes(b.method) ? b.method : 'نقد';
+  // فاتورة تمت بدون إنترنت على الجهاز: تحمل رقماً من الجهاز وتاريخ البيع الفعلي
+  const offline = b.offline === true;
+  const clientId = typeof b.id === 'string' && /^[a-z0-9]{6,40}$/.test(b.id) ? b.id : null;
+  if (offline && !clientId) fail(400, 'رقم الفاتورة غير صالح');
+  if (clientId) {
+    // منع التكرار: إن وصلت نفس الفاتورة مرتين نعيد المحفوظة
+    const ex = await db.prepare(`SELECT data, v FROM records WHERE coll = 'sales' AND id = ?`).bind(clientId).first();
+    if (ex) {
+      const sale = JSON.parse(ex.data);
+      const pids = [...new Set((sale.items || []).map(i => i.productId))];
+      const prs = (await db.prepare(`SELECT id, data, v FROM records WHERE coll = 'products' AND deleted = 0 AND id IN (SELECT value FROM json_each(?))`).bind(JSON.stringify(pids)).all()).results;
+      return { now: Date.now(), sale, duplicate: true, records: [{ coll: 'sales', id: clientId, v: ex.v, deleted: false, data: sale }, ...prs.map(r => ({ coll: 'products', id: r.id, v: r.v, deleted: false, data: JSON.parse(r.data) }))] };
+    }
+  }
+  let saleDate = new Date().toISOString();
+  if (offline && typeof b.date === 'string') {
+    const t = Date.parse(b.date);
+    if (Number.isFinite(t) && t <= Date.now() + 5 * 60000 && t >= Date.now() - 60 * 864e5) saleDate = new Date(t).toISOString();
+  }
   for (let attempt = 0; attempt < 4; attempt++) {
     const ids = [...new Set(lines.map(l => str(l.productId, 80)))];
     const prows = (await db.prepare(`SELECT id, data, v FROM records WHERE coll = 'products' AND deleted = 0 AND id IN (SELECT value FROM json_each(?))`).bind(JSON.stringify(ids)).all()).results;
@@ -189,27 +208,40 @@ async function checkout(db, me, b) {
     let customer = null;
     if (b.customerId) {
       const c = await db.prepare(`SELECT data FROM records WHERE coll = 'customers' AND id = ? AND deleted = 0`).bind(str(b.customerId, 80)).first();
-      if (!c) fail(400, 'الزبون غير موجود');
-      customer = JSON.parse(c.data);
+      if (c) customer = JSON.parse(c.data);
+      else if (offline) customer = { id: str(b.customerId, 80), name: str(b.customerName, 120) || 'زبون' };
+      else fail(400, 'الزبون غير موجود');
     }
     if (method === 'آجل' && !customer) fail(400, 'اختر الزبون للبيع بالآجل');
     const items = [];
     for (const l of lines) {
       const p = products.get(str(l.productId, 80)), qty = Math.floor(+l.qty || 0);
-      if (!p) fail(400, 'منتج غير موجود — حدّث الصفحة');
       if (qty <= 0) fail(400, 'كمية غير صالحة');
+      // سعر فاتورة الانقطاع هو السعر الذي دفعه الزبون فعلاً
+      const offPrice = offline && Number.isFinite(+l.price) && +l.price >= 0 ? +l.price : null;
+      if (!p) {
+        if (!offline) fail(400, 'منتج غير موجود — حدّث الصفحة');
+        items.push({ productId: str(l.productId, 80), name: str(l.name, 160) || 'منتج محذوف', qty, price: offPrice || 0, cost: 0, batches: [], short: qty });
+        continue;
+      }
       const t = today();
-      const batches = (p.data.batches || []).filter(x => x.qty > 0 && (!x.expiry || x.expiry >= t)).sort((a, c) => (a.expiry || '9999').localeCompare(c.expiry || '9999'));
+      const byExp = (a, c) => (a.expiry || '9999').localeCompare(c.expiry || '9999');
+      const batches = (p.data.batches || []).filter(x => x.qty > 0 && (!x.expiry || x.expiry >= t)).sort(byExp);
+      // البيع تم فعلاً أثناء الانقطاع: نخصم من الدفعات التي انتهت بعده أيضاً، والنقص يُسجّل للمراجعة
+      if (offline) batches.push(...(p.data.batches || []).filter(x => x.qty > 0 && x.expiry && x.expiry < t).sort(byExp));
       const avail = batches.reduce((s, x) => s + x.qty, 0);
-      if (qty > avail) fail(409, `${p.data.name}: المتوفر فقط ${avail}`);
+      if (qty > avail && !offline) fail(409, `${p.data.name}: المتوفر فقط ${avail}`);
       let need = qty; const used = [];
       for (const x of batches) { if (!need) break; const take = Math.min(x.qty, need); x.qty -= take; need -= take; used.push({ batchId: x.id, qty: take, expiry: x.expiry }); }
-      items.push({ productId: p.data.id, name: p.data.name, qty, price: +p.data.price || 0, cost: +p.data.cost || 0, batches: used });
+      const item = { productId: p.data.id, name: p.data.name, qty, price: offPrice ?? (+p.data.price || 0), cost: +p.data.cost || 0, batches: used };
+      if (need) item.short = need;
+      items.push(item);
     }
     const subtotal = items.reduce((t, i) => t + i.qty * i.price, 0), total = Math.max(0, subtotal - discount);
     let paid = method === 'آجل' ? Math.min(Math.max(0, +b.paid || 0), total) : (b.paid === '' || b.paid == null ? total : +b.paid);
+    if (offline && method !== 'آجل' && !(paid >= total)) paid = total;
     if (method !== 'آجل' && !(paid >= total)) fail(400, 'المبلغ المستلم أقل من الإجمالي — اختر "آجل"');
-    const sale = { id: uid(), date: new Date().toISOString(), items, subtotal, discount, total, paid, due: method === 'آجل' ? total - paid : 0, method,
+    const sale = { id: clientId || uid(), date: saleDate, ...(offline ? { offline: true } : {}), items, subtotal, discount, total, paid, due: method === 'آجل' ? total - paid : 0, method,
       userId: me.id, userName: me.name, customerId: customer?.id || null, customerName: customer?.name || '' };
     const now = Date.now(), w = randHex(8);
     const upd = JSON.stringify([...products.values()].map(p => ({ id: p.data.id, v: p.v, data: JSON.stringify(p.data) })));
@@ -223,7 +255,7 @@ async function checkout(db, me, b) {
         db.prepare(`INSERT INTO records (coll, id, data, v, updated_at, deleted, w) VALUES ('sales', ?, json_set(?, '$.no', (SELECT value FROM counters WHERE name = 'sale')), 1, ?, 0, ?)`).bind(sale.id, JSON.stringify(sale), now, w)
       ]);
     } catch (e) {
-      if (/malformed JSON|conflict/i.test(String(e.message))) continue; // تعارض — أعد المحاولة ببيانات جديدة
+      if (/malformed JSON|conflict|UNIQUE/i.test(String(e.message))) continue; // UNIQUE: نفس الفاتورة وصلت مرتين بنفس اللحظة // تعارض — أعد المحاولة ببيانات جديدة
       throw e;
     }
     const out = (await db.prepare(`SELECT coll, id, data, v FROM records WHERE w = ?`).bind(w).all()).results

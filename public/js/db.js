@@ -2,17 +2,68 @@
 // • تُرسل فقط السجلات التي تغيّرت، مع رقم الإصدار لمنع الكتابة فوق تعديلات جهاز آخر
 // • تسحب تغييرات الأجهزة الأخرى تلقائياً كل 15 ثانية
 // • إن لم يتوفر خادم (فتح الملف مباشرة) تعمل محلياً في المتصفح
+// • يعمل بدون إنترنت: نسخة من البيانات محفوظة على الجهاز (IndexedDB) + صندوق صادر لمبيعات وقت الانقطاع
 const DB = (() => {
+  // ---- تخزين بسيط في IndexedDB ----
+  const idb = (() => {
+    let dbp = null;
+    const open = () => dbp || (dbp = new Promise((res, rej) => {
+      const r = indexedDB.open('ayar', 1);
+      r.onupgradeneeded = () => r.result.createObjectStore('kv');
+      r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error);
+    }));
+    const run = async (mode, fn) => { const db = await open(); return new Promise((res, rej) => { const t = db.transaction('kv', mode), req = fn(t.objectStore('kv')); t.oncomplete = () => res(req && req.result); t.onerror = () => rej(t.error); t.onabort = () => rej(t.error); }); };
+    return { get: k => run('readonly', st => st.get(k)).catch(() => null), set: (k, v) => run('readwrite', st => st.put(v, k)).catch(() => {}), del: k => run('readwrite', st => st.delete(k)).catch(() => {}) };
+  })();
+  const SNAP_KEY = 'snap', OUTBOX_KEY = 'ayar-outbox';
   const LS_KEY = 'ayar-db-v1', TOKEN_KEY = 'ayar-token';
   const COLLS = ['products', 'sales', 'stocktakes', 'suppliers', 'purchases', 'supplierPayments', 'customers', 'customerPayments'];
   const META = ['settings', 'categories'];
   let state = null, useServer = false, saveTimer = null, pollTimer = null;
   let synced = new Map();           // "coll|id" → { v, json }  آخر نسخة مؤكدة من الخادم
   let lastPull = 0, pushing = null, again = false, offline = false;
-  let hooks = { authLost: () => {}, saveError: () => {}, remote: () => {}, status: () => {} };
+  let hooks = { authLost: () => {}, saveError: () => {}, remote: () => {}, status: () => {}, synced: () => {} };
 
   const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
-  const token = () => sessionStorage.getItem(TOKEN_KEY) || '';
+  // الجلسة تبقى محفوظة على الجهاز (مثل التطبيقات) — تنتهي من الخادم بعد 12 ساعة بدون استخدام
+  try { const old = sessionStorage.getItem(TOKEN_KEY); if (old && !localStorage.getItem(TOKEN_KEY)) localStorage.setItem(TOKEN_KEY, old); sessionStorage.removeItem(TOKEN_KEY); } catch {}
+  const token = () => localStorage.getItem(TOKEN_KEY) || '';
+  const setToken = t => t ? localStorage.setItem(TOKEN_KEY, t) : localStorage.removeItem(TOKEN_KEY);
+
+  // ---- صندوق الصادر: مبيعات تمت بدون إنترنت وتنتظر الرفع ----
+  let outbox = []; try { outbox = JSON.parse(localStorage.getItem(OUTBOX_KEY) || '[]'); } catch { outbox = []; }
+  let offsets = new Map();          // productId → Map(batchId → كمية مخصومة محلياً ولم تُرفع بعد)
+  const saveOutbox = () => { try { localStorage.setItem(OUTBOX_KEY, JSON.stringify(outbox)); } catch {} };
+  function computeOffsets() {
+    offsets = new Map();
+    for (const o of outbox) for (const t of o.take) {
+      if (!offsets.has(t.productId)) offsets.set(t.productId, new Map());
+      const m = offsets.get(t.productId); m.set(t.batchId, (m.get(t.batchId) || 0) + t.qty);
+    }
+  }
+  computeOffsets();
+  // المنتج كما يجب أن يكون على الخادم (قبل خصم مبيعات الانقطاع)
+  function serialize(coll, item) {
+    if (coll === 'products' && offsets.has(String(item.id))) {
+      const m = offsets.get(String(item.id));
+      return { ...item, batches: (item.batches || []).map(b => m.has(b.id) ? { ...b, qty: b.qty + m.get(b.id) } : b) };
+    }
+    return item;
+  }
+  function subtractOffsets(item) {
+    const m = offsets.get(String(item.id)); if (!m) return;
+    for (const b of item.batches || []) if (m.has(b.id)) b.qty -= m.get(b.id);
+  }
+
+  // ---- نسخة البيانات على الجهاز (للفتح بدون إنترنت) ----
+  let snapTimer = null, snapCache;
+  async function saveSnap() {
+    clearTimeout(snapTimer);
+    if (!useServer || !state || !currentUserId) return;
+    await idb.set(SNAP_KEY, { state, synced: [...synced], lastPull, userId: currentUserId, savedAt: Date.now() });
+  }
+  const scheduleSnap = () => { clearTimeout(snapTimer); snapTimer = setTimeout(saveSnap, 800); };
+  async function readSnap() { if (snapCache === undefined) snapCache = await idb.get(SNAP_KEY); return snapCache; }
   const key = (c, i) => c + '|' + i;
 
   function defaults() {
@@ -61,34 +112,48 @@ const DB = (() => {
     catch { const e = new Error('لا يوجد اتصال بالخادم'); e.network = true; throw e; }
     let data = {};
     try { data = await r.json(); } catch {}
-    if (r.status === 401 && path !== '/api/login') { sessionStorage.removeItem(TOKEN_KEY); stopPolling(); hooks.authLost(); }
+    if (r.status === 401 && path !== '/api/login') { setToken(''); stopPolling(); hooks.authLost(); }
     if (!r.ok) { const e = new Error(data.error || 'خطأ في الاتصال'); e.status = r.status; throw e; }
     return data;
   }
   async function detect() {
-    try { const r = await fetch('/api/ping', { cache: 'no-store' }); useServer = r.ok; return r.ok ? await r.json() : null; }
-    catch { useServer = false; return null; }
+    try {
+      const r = await fetch('/api/ping', { cache: 'no-store' });
+      const ct = r.headers.get('content-type') || '';
+      if (r.ok && ct.includes('json')) { useServer = true; return await r.json(); }
+      throw new Error('no api');
+    } catch {
+      // لا يوجد اتصال: إن كانت هناك نسخة محفوظة على الجهاز نفتح منها
+      const snap = await readSnap();
+      if (snap && snap.state && token()) { useServer = true; offline = true; return { name: snap.state.settings?.name, cached: true }; }
+      useServer = false; return null;
+    }
   }
   async function login(username, password) {
     const r = await api('/api/login', { method: 'POST', body: { username, password } });
-    sessionStorage.setItem(TOKEN_KEY, r.token);
+    setToken(r.token);
     return r.user;
   }
   async function logout() {
     stopPolling();
     if (useServer && token()) { try { await api('/api/logout', { method: 'POST', body: {} }); } catch {} }
-    sessionStorage.removeItem(TOKEN_KEY);
-    if (useServer) { state = null; synced = new Map(); lastPull = 0; }
+    setToken('');
+    if (useServer) { state = null; synced = new Map(); lastPull = 0; snapCache = null; await idb.del(SNAP_KEY); }
   }
   async function me() {
     if (!useServer || !token()) return null;
-    try { return (await api('/api/me')).user; } catch { return null; }
+    try { return (await api('/api/me')).user; }
+    catch (e) {
+      if (!e.network) return null;
+      const snap = await readSnap();
+      return snap && snap.state ? (snap.state.users || []).find(u => u.id === snap.userId && u.active !== false) || null : null;
+    }
   }
 
   // ---------------- تحويل الحالة ↔ سجلات ----------------
   function records() {
     const out = [];
-    for (const c of COLLS) for (const item of state[c]) if (item && item.id) out.push({ coll: c, id: String(item.id), data: item });
+    for (const c of COLLS) for (const item of state[c]) if (item && item.id && !item.pending) out.push({ coll: c, id: String(item.id), data: serialize(c, item) });
     for (const m of META) out.push({ coll: 'meta', id: m, data: { id: m, value: state[m] } });
     return out;
   }
@@ -96,7 +161,7 @@ const DB = (() => {
   function localItem(coll, id) { return coll === 'meta' ? null : state[coll].find(x => String(x.id) === id); }
   function localJSON(coll, id) {
     if (coll === 'meta') return JSON.stringify({ id, value: state[id] });
-    const it = localItem(coll, id); return it ? JSON.stringify(it) : null;
+    const it = localItem(coll, id); return it ? JSON.stringify(serialize(coll, it)) : null;
   }
   // تطبيق سجل قادم من الخادم على الحالة المحلية
   function applyRecord(rec) {
@@ -109,8 +174,11 @@ const DB = (() => {
     } else if (COLLS.includes(coll)) {
       const arr = state[coll], idx = arr.findIndex(x => String(x.id) === id);
       if (rec.deleted || !rec.data) { if (idx >= 0) arr.splice(idx, 1); }
-      else if (idx >= 0) replaceIn(arr[idx], rec.data);
-      else arr.push(rec.data);
+      else {
+        const data = coll === 'products' ? JSON.parse(JSON.stringify(rec.data)) : rec.data;
+        if (coll === 'products') subtractOffsets(data);
+        if (idx >= 0) replaceIn(arr[idx], data); else arr.push(data);
+      }
     }
     synced.set(key(coll, id), { v: rec.v, json: rec.deleted ? null : localJSON(coll, id), deleted: !!rec.deleted });
   }
@@ -138,7 +206,17 @@ const DB = (() => {
       normalize();
       return state;
     }
-    const r = await api('/api/sync?since=0');
+    let r;
+    try { r = await api('/api/sync?since=0'); }
+    catch (e) {
+      const snap = e.network ? await readSnap() : null;
+      if (!snap || !snap.state || snap.userId !== currentUserId) throw e;
+      // فتح بدون إنترنت من النسخة المحفوظة
+      state = snap.state; synced = new Map(snap.synced || []); lastPull = snap.lastPull || 0; offline = true;
+      normalize(); restorePending(true);
+      startPolling(); status();
+      return state;
+    }
     synced = new Map();
     const hasSettings = r.records.some(x => x.coll === 'meta' && x.id === 'settings');
     state = defaults();
@@ -146,12 +224,24 @@ const DB = (() => {
     for (const rec of r.records) applyRecord(rec);
     for (const c of COLLS) state[c].sort((a, b) => String(a.date || a.createdAt || '').localeCompare(String(b.date || b.createdAt || '')));
     lastPull = r.now;
+    restorePending(false);
     // أول تشغيل: قاعدة بيانات فارغة → إعدادات افتراضية + منتجات تجريبية (للمدير فقط)
     if (!hasSettings && r.users.find(u => u.id === currentUserId)?.role === 'admin') { demo(state); persist(true); }
     startPolling();
+    saveSnap();
+    if (outbox.length || pendingCount()) setTimeout(() => persist(true), 500);
     return state;
   }
   let currentUserId = null;
+  // إعادة مبيعات الانقطاع إلى الحالة المحلية (بعد التحميل من الخادم أو من النسخة المحفوظة)
+  function restorePending(fromSnap) {
+    for (const o of outbox) {
+      if (state.sales.some(x => x.id === o.id)) continue;
+      state.sales.push({ ...o.sale, pending: true });
+      // النسخة المحفوظة أقدم من البيع: نطبّق الخصم يدوياً
+      if (fromSnap) for (const t of o.take) { const p = state.products.find(x => x.id === t.productId); const b = p?.batches?.find(x => x.id === t.batchId); if (b) b.qty -= t.qty; }
+    }
+  }
 
   // ---------------- السحب (تغييرات الأجهزة الأخرى) ----------------
   async function pull() {
@@ -168,8 +258,8 @@ const DB = (() => {
       }
       if (JSON.stringify(r.users) !== JSON.stringify(state.users)) { state.users = r.users; changed = true; }
       lastPull = r.now;
-      if (offline) { offline = false; status(); }
-      if (changed) hooks.remote();
+      if (offline) { offline = false; status(); if (outbox.length) persist(true); }
+      if (changed) { hooks.remote(); scheduleSnap(); }
     } catch (e) { if (e.network) { offline = true; status(); } }
   }
   function startPolling() { stopPolling(); pollTimer = setInterval(() => { if (document.visibilityState === 'visible') { pull(); if (pendingCount()) persist(true); } }, 15000); }
@@ -178,7 +268,7 @@ const DB = (() => {
   window.addEventListener('online', () => { if (useServer && state) { pull(); persist(true); } });
 
   // ---------------- الإرسال ----------------
-  function status() { hooks.status({ online: useServer, offline, saving: !!pushing, pending: pendingCount() }); }
+  function status() { hooks.status({ online: useServer, offline, saving: !!pushing || replaying, pending: pendingCount(), outbox: outbox.length }); if (useServer) scheduleSnap(); }
   function saveLocal() { try { localStorage.setItem(LS_KEY, JSON.stringify(state)); } catch { hooks.saveError('مساحة التخزين في المتصفح ممتلئة'); } }
 
   async function pushNow() {
@@ -186,7 +276,7 @@ const DB = (() => {
     if (!useServer) return saveLocal();
     if (pushing) { again = true; return pushing; }
     const changes = diff();
-    if (!changes.length) return status();
+    if (!changes.length) { status(); return outbox.length && !offline ? replay() : undefined; }
     pushing = (async () => {
       status();
       // تقسيم إلى دفعات صغيرة (حدود Cloudflare D1)
@@ -228,8 +318,45 @@ const DB = (() => {
     })().finally(() => {
       pushing = null; status();
       if (again) { again = false; pushNow(); }
+      else if (outbox.length && !offline) replay();
     });
     return pushing;
+  }
+
+  // ---- رفع مبيعات الانقطاع إلى الخادم (بالترتيب، وبدون تكرار) ----
+  let replaying = false;
+  async function replay() {
+    if (replaying || !useServer || !token() || !outbox.length) return;
+    replaying = true; status();
+    let done = 0;
+    try {
+      for (const o of [...outbox]) {
+        try {
+          const r = await api('/api/checkout', { method: 'POST', body: { ...o.payload, id: o.id, date: o.sale.date, offline: true } });
+          outbox = outbox.filter(x => x.id !== o.id); saveOutbox(); computeOffsets();
+          for (const rec of r.records) applyRecord(rec);
+          done++; offline = false;
+        } catch (e) {
+          if (e.network) { offline = true; break; }
+          if (e.status === 401) break;
+          o.error = e.message; o.tries = (o.tries || 0) + 1; saveOutbox();
+          if (o.tries === 1) hooks.saveError(`تعذر رفع فاتورة الانقطاع ${o.sale.no}: ${e.message}`);
+        }
+      }
+    } finally {
+      replaying = false; status();
+      if (done) { hooks.remote(); hooks.synced(done); saveSnap(); }
+    }
+  }
+  // بيع بدون إنترنت: المنتجات خُصمت محلياً، نحفظ الفاتورة في صندوق الصادر
+  async function queueSale(sale, payload) {
+    const take = [];
+    for (const it of sale.items) for (const b of it.batches) take.push({ productId: it.productId, batchId: b.batchId, qty: b.qty });
+    outbox.push({ id: sale.id, payload, take, sale: { ...sale } });
+    saveOutbox(); computeOffsets();
+    state.sales.push({ ...sale, pending: true });
+    await saveSnap(); status();
+    return state.sales[state.sales.length - 1];
   }
   function persist(now = false) {
     clearTimeout(saveTimer);
@@ -254,7 +381,11 @@ const DB = (() => {
   }
 
   return {
-    load, uid, detect, login, logout, me, api, pull, checkout,
+    load, uid, detect, login, logout, me, api, pull, checkout, queueSale,
+    get outbox() { return outbox.length; },
+    get isOffline() { return offline; },
+    set onSynced(fn) { hooks.synced = fn; },
+    sync: async () => { await pull(); await persist(true); },
     get s() { return state; },
     save: () => persist(),
     flush: () => persist(true) || Promise.resolve(),

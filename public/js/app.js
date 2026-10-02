@@ -24,6 +24,9 @@ const I = {
   money: ic('<rect x="2" y="6" width="20" height="12" rx="2"/><circle cx="12" cy="12" r="2.5"/><path d="M6 12h.01M18 12h.01"/>'),
   print: ic('<path d="M6 9V3h12v6M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect x="6" y="14" width="12" height="7"/>'),
   menu: ic('<path d="M4 6h16M4 12h16M4 18h16"/>'),
+  expand: ic('<path d="M8 3H5a2 2 0 0 0-2 2v3M16 3h3a2 2 0 0 1 2 2v3M8 21H5a2 2 0 0 1-2-2v-3M16 21h3a2 2 0 0 0 2-2v-3"/>'),
+  shrink: ic('<path d="M8 3v3a2 2 0 0 1-2 2H3M16 3v3a2 2 0 0 0 2 2h3M8 21v-3a2 2 0 0 0-2-2H3M16 21v-3a2 2 0 0 1 2-2h3"/>'),
+  phone: ic('<rect x="6" y="2" width="12" height="20" rx="3"/><path d="M11 18h2"/>'),
   camera: ic('<path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/>'),
   wand: ic('<path d="m15 4 5 5M3 21l11-11M14 3l1 1M20 9l1 1M19 3v2M18 4h2"/>'),
   eye: ic('<path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8S1 12 1 12z"/><circle cx="12" cy="12" r="3"/>'),
@@ -103,7 +106,8 @@ function toast(msg, err = false) {
   $('#toasts').appendChild(t);
   setTimeout(() => t.remove(), 2600);
 }
-function beep(ok = true) {
+function beep(ok = true, kind) {
+  haptic(kind || (ok ? 'light' : 'error'));
   try {
     const a = new (window.AudioContext || window.webkitAudioContext)();
     const o = a.createOscillator(), g = a.createGain();
@@ -152,12 +156,13 @@ function modal(html, { size = '', onClose } = {}) {
   const root = $('#modal-root');
   const back = document.createElement('div');
   back.className = 'modal-back';
-  back.innerHTML = `<div class="modal glass ${size}">${html}</div>`;
+  back.innerHTML = `<div class="modal glass ${size}"><div class="sheet-grab" aria-hidden="true"></div>${html}</div>`;
   const close = () => { if (!back.isConnected) return; back.remove(); onClose && onClose(); };
   back._close = close;
   back.addEventListener('mousedown', e => { if (e.target === back) close(); });
   $$('[data-close]', back).forEach(b => b.onclick = close);
   root.appendChild(back);
+  enableSheetSwipe(back, close);
   const first = $('input[autofocus], input:not([type=hidden]):not([type=file]):not([type=checkbox])', back);
   first && finePointer() && setTimeout(() => first.focus(), 50);
   return { el: back, close };
@@ -182,8 +187,8 @@ function loadZXing() {
   if (zxingLoading) return zxingLoading;
   zxingLoading = new Promise((res, rej) => {
     const s = document.createElement('script');
-    s.src = 'https://unpkg.com/@zxing/browser@0.1.5/umd/zxing-browser.min.js';
-    s.onload = res; s.onerror = rej; document.head.appendChild(s);
+    s.src = 'vendor/zxing-browser.min.js'; // مستضافة محلياً حتى يعمل الماسح بدون إنترنت
+    s.onload = res; s.onerror = () => { zxingLoading = null; rej(new Error('تعذر تحميل قارئ الباركود')); }; document.head.appendChild(s);
   });
   return zxingLoading;
 }
@@ -240,12 +245,15 @@ let current = 'dashboard';
 
 function applyTheme() {
   document.documentElement.dataset.theme = S().settings.theme;
+  syncThemeColor();
   $('#brand-name').textContent = S().settings.name || 'أيار';
   document.title = `${S().settings.name} — إدارة الصيدلية`;
 }
 function renderNav() {
   $('#nav').innerHTML = Object.entries(ROUTES).filter(([k]) => can(k)).map(([k, v]) =>
-    `<a href="#${k}" class="${k === current ? 'active' : ''}">${v.i}<span>${v.t}</span></a>`).join('');
+    `<a href="#${k}" class="${k === current ? 'active' : ''}">${v.i}<span>${v.t}</span></a>`).join('')
+    + (canInstall() ? `<a href="#" id="nav-install" class="nav-install">${I.phone}<span>تثبيت التطبيق</span></a>` : '');
+  const ni = $('#nav-install'); ni && (ni.onclick = e => { e.preventDefault(); setNav(false); installApp(); });
   $('#user-box').innerHTML = me ? `<div class="list-item" style="border:none;padding:6px 4px"><div class="thumb">${esc(me.name[0])}</div>
     <div class="grow" style="min-width:0"><b style="font-size:14px">${esc(me.name)}</b><div class="small muted">${ROLES[me.role].t}</div></div>
     <button class="btn icon ghost sm" id="logout" title="تسجيل الخروج">${I.logout}</button></div>` : '';
@@ -267,9 +275,12 @@ function labelTables() {
   }
 }
 new MutationObserver(() => { clearTimeout(labelTimer); labelTimer = setTimeout(labelTables, 30); }).observe(document.body, { childList: true, subtree: true });
+let lastRoute = null;
 function go() {
   if (!me) return showLogin();
-  current = (location.hash.slice(1) || 'dashboard');
+  // اختصارات الأيقونة: #products/new تفتح نموذج منتج جديد
+  const [route, action] = (location.hash.slice(1) || 'dashboard').split('/');
+  current = route;
   if (!ROUTES[current]) current = 'dashboard';
   if (!can(current)) { current = Object.keys(ROUTES).find(can); if (location.hash.slice(1) !== current) return void (location.hash = current); }
   renderNav();
@@ -277,8 +288,15 @@ function go() {
   $('#page-sub').textContent = new Date().toLocaleDateString('ar-IQ', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric', numberingSystem: 'latn' });
   $('#top-actions').innerHTML = '';
   setNav(false); setCart(false);
+  if (current !== 'pos' && document.body.classList.contains('pos-focus')) setPosFocus(false);
   window.scrollTo(0, 0);
-  ROUTES[current].r($('#view'));
+  const v = $('#view');
+  ROUTES[current].r(v);
+  afterRender();
+  // حركة انتقال ناعمة بين الصفحات
+  if (lastRoute && lastRoute !== current) { v.classList.remove('view-enter'); void v.offsetWidth; v.classList.add('view-enter'); }
+  lastRoute = current;
+  if (action === 'new' && current === 'products' && can('products')) { history.replaceState(null, '', '#products'); setTimeout(() => productForm(), 120); }
 }
 
 // ---------- تسجيل الدخول ----------
@@ -326,9 +344,10 @@ async function startSession(user) {
   applyTheme();
   $('#login')?.remove(); $('.app').classList.remove('hidden');
   go();
-  if (me.mustChange) setTimeout(() => changePassword(true), 300);
+  if (me.mustChange && !DB.isOffline) setTimeout(() => changePassword(true), 300);
 }
 async function logout() {
+  if (DB.outbox && DB.isOffline && !confirm(`توجد ${DB.outbox} فاتورة بيع بدون إنترنت لم تُرفع بعد. ستبقى محفوظة على هذا الجهاز وتُرفع عند أول دخول مع اتصال. تسجيل الخروج؟`)) return;
   await DB.flush();
   await DB.logout();
   me = null; cart = []; posCustomer = null; sessionStorage.removeItem('ayar-user');
@@ -350,7 +369,7 @@ function changePassword(forced = false) {
     try {
       if (DB.online) await DB.api('/api/password', { method: 'POST', body: { current: cur, password: a } });
       else { if (needCurrent && me.pass !== hashPass(me.username, cur)) throw new Error('كلمة المرور الحالية غير صحيحة'); me.pass = hashPass(me.username, a); DB.save(); }
-      delete me.mustChange; m.close(); toast('تم تغيير كلمة المرور ✅');
+      delete me.mustChange; const su = S().users.find(u => u.id === me.id); if (su) delete su.mustChange; DB.save(); m.close(); toast('تم تغيير كلمة المرور ✅');
     } catch (e) { toast(e.message, true); }
   };
 }
@@ -514,17 +533,23 @@ async function checkout(method, paidRaw) {
   if (method === 'آجل' && !posCustomer) return pickCustomer(c => { posCustomer = c; drawCart(); });
   if (method !== 'آجل' && paidRaw !== '' && num(paidRaw) < total0) { beep(false); return toast('المبلغ المستلم أقل من الإجمالي — اختر "آجل" لتسجيل الباقي ديناً', true); }
   for (const l of cart) { const p = findProduct(l.id); if (!p || l.qty > sellableQty(p)) return toast(`الكمية غير متوفرة: ${p?.name || 'منتج محذوف'}`, true); }
-  let sale;
-  if (DB.online) {
+  let sale, offlineSale = DB.online && DB.isOffline;
+  const payload = { items: cart.map(l => ({ productId: l.id, qty: l.qty, price: l.price, name: findProduct(l.id)?.name || '' })), discount, method,
+    paid: paidRaw === '' ? (method === 'آجل' ? 0 : '') : num(paidRaw), customerId: posCustomer?.id || null, customerName: posCustomer?.name || '' };
+  if (DB.online && !offlineSale) {
     // البيع يتم على الخادم: يخصم المخزون بأمان حتى لو باع جهازان بنفس الوقت
     checkingOut = true;
     const btn = $('#checkout'); if (btn) { btn.disabled = true; btn.textContent = 'جاري الحفظ…'; }
     try {
-      sale = await DB.checkout({ items: cart.map(l => ({ productId: l.id, qty: l.qty })), discount, method,
-        paid: paidRaw === '' ? (method === 'آجل' ? 0 : '') : num(paidRaw), customerId: posCustomer?.id || null });
-    } catch (e) { beep(false); toast(e.message, true); if (e.status === 409) await DB.pull(); drawCart(); return; }
+      sale = await DB.checkout(payload);
+    } catch (e) {
+      // انقطع الإنترنت: نكمل البيع على الجهاز ونرفعه لاحقاً
+      if (!e.network) { beep(false); toast(e.message, true); if (e.status === 409) await DB.pull(); drawCart(); return; }
+      offlineSale = true;
+    }
     finally { checkingOut = false; }
-  } else {
+  }
+  if (!sale) {
     let paid, due = 0;
     if (method === 'آجل') { paid = Math.min(num(paidRaw), total0); due = total0 - paid; }
     else paid = paidRaw === '' ? total0 : num(paidRaw);
@@ -541,17 +566,17 @@ async function checkout(method, paidRaw) {
       items.push({ productId: p.id, name: p.name, qty: l.qty, price: p.price, cost: p.cost || 0, batches: used });
     }
     const subtotal = items.reduce((t, i) => t + i.qty * i.price, 0);
-    sale = { id: DB.uid(), no: s.seq.sale++, date: new Date().toISOString(), items, subtotal, discount, total: Math.max(0, subtotal - discount),
+    sale = { id: DB.uid(), no: offlineSale ? `م${DB.outbox + 1}` : s.seq.sale++, date: new Date().toISOString(), items, subtotal, discount, total: Math.max(0, subtotal - discount),
       paid, due, method, userId: me.id, userName: me.name, customerId: posCustomer?.id || null, customerName: posCustomer?.name || '' };
-    s.sales.push(sale);
-    DB.save();
+    if (offlineSale) sale = await DB.queueSale(sale, payload);
+    else { s.sales.push(sale); DB.save(); }
   }
   cart = []; discount = 0; posCustomer = null; payMethod = 'نقد';
   setCart(false);
-  beep();
+  beep(true, 'success');
   const paid = sale.paid, due = sale.due;
   const m = modal(`${modalHead('تم البيع بنجاح ✅')}
-    <div class="center"><div class="muted">فاتورة رقم #${sale.no}${sale.customerName ? ` — ${esc(sale.customerName)}` : ''}</div><div style="font-size:34px;font-weight:800;color:var(--primary);margin:10px 0">${money(sale.total)}</div>
+    <div class="center"><div class="muted">فاتورة رقم #${esc(sale.no)}${sale.customerName ? ` — ${esc(sale.customerName)}` : ''}</div>${sale.pending ? '<div class="badge warn" style="margin-top:6px">بدون إنترنت — رقم مؤقت، تُرفع تلقائياً عند عودة الاتصال</div>' : ''}<div style="font-size:34px;font-weight:800;color:var(--primary);margin:10px 0">${money(sale.total)}</div>
     ${paid > sale.total ? `<div>الباقي للزبون: <b>${money(paid - sale.total)}</b></div>` : ''}
     ${due ? `<div class="badge danger" style="font-size:14px">سُجّل ديناً: ${money(due)} — إجمالي ذمته ${money(customerBalance(sale.customerId))}</div>` : ''}</div>
     <div class="row" style="justify-content:center;margin-top:18px"><button class="btn primary" id="pr">${I.print} طباعة الفاتورة</button><button class="btn ghost" data-close>فاتورة جديدة</button></div>`,
@@ -1008,7 +1033,7 @@ function renderSales(v) {
     <button class="btn sm ghost" id="s-today">اليوم</button><button class="btn sm ghost" id="s-all">الكل</button></div>
   <div class="grid g3">${stat(I.receipt, list.length, 'عدد الفواتير')}${stat(I.money, money(total), 'إجمالي المبيعات')}${canManage() ? stat(I.money, money(profit), 'الربح التقديري') : stat(I.wallet, money(list.reduce((t, x) => t + (x.due || 0), 0)), 'منها آجل')}</div>
   <div class="card glass table-wrap">${list.length ? `<table><thead><tr><th>#</th><th>التاريخ</th><th>الأصناف</th><th>الزبون</th><th>الكاشير</th><th>الدفع</th><th>الإجمالي</th><th></th></tr></thead><tbody>
-    ${list.map(x => `<tr><td><b>${x.no}</b></td><td>${fmtDT(x.date)}</td><td class="small">${x.items.map(i => `${esc(i.name)} ×${i.qty}`).join('، ')}</td><td class="small">${esc(x.customerName) || '—'}</td><td class="small">${esc(x.userName) || '—'}</td><td><span class="badge ${x.method === 'آجل' ? 'danger' : ''}">${esc(x.method)}</span>${x.due ? `<div class="small" style="color:var(--danger)">دين ${money(x.due)}</div>` : ''}</td><td><b>${money(x.total)}</b></td>
+    ${list.map(x => `<tr><td><b>${esc(x.no)}</b>${x.pending ? ' <span class="badge warn" title="تمت بدون إنترنت — بانتظار الرفع">⏳</span>' : x.offline ? ' <span class="badge" title="بيعت أثناء انقطاع الإنترنت">أوفلاين</span>' : ''}</td><td>${fmtDT(x.date)}</td><td class="small">${x.items.map(i => `${esc(i.name)} ×${i.qty}`).join('، ')}</td><td class="small">${esc(x.customerName) || '—'}</td><td class="small">${esc(x.userName) || '—'}</td><td><span class="badge ${x.method === 'آجل' ? 'danger' : ''}">${esc(x.method)}</span>${x.due ? `<div class="small" style="color:var(--danger)">دين ${money(x.due)}</div>` : ''}</td><td><b>${money(x.total)}</b></td>
     <td><div class="row" style="flex-wrap:nowrap"><button class="btn sm icon" data-print="${x.id}">${I.print}</button>${canManage() ? `<button class="btn sm icon danger" data-ret="${x.id}" title="إرجاع الفاتورة">${I.undo}</button>` : ''}</div></td></tr>`).join('')}</tbody></table>` : '<div class="empty">لا توجد فواتير في هذه الفترة</div>'}</div>`;
   $('#sf').onchange = e => { salesFrom = e.target.value; renderSales(v); };
   $('#st').onchange = e => { salesTo = e.target.value; renderSales(v); };
@@ -1017,6 +1042,7 @@ function renderSales(v) {
   $$('[data-print]').forEach(b => b.onclick = () => printReceipt(S().sales.find(x => x.id === b.dataset.print)));
   $$('[data-ret]').forEach(b => b.onclick = () => {
     const sale = S().sales.find(x => x.id === b.dataset.ret);
+    if (sale.pending) return toast('هذه الفاتورة تمت بدون إنترنت ولم تُرفع بعد — انتظر عودة الاتصال ثم أرجعها', true);
     confirmBox(`إرجاع الفاتورة #${sale.no} وإعادة الكميات إلى المخزون؟`, () => {
       for (const it of sale.items) {
         const p = findProduct(it.productId); if (!p) continue;
@@ -1776,6 +1802,204 @@ function renderSettings(v) {
   $('#reset').onclick = () => confirmBox('سيتم حذف <b>جميع</b> البيانات (المنتجات، المبيعات، الجرد، الموردين والزبائن). حسابات المستخدمين تبقى كما هي. هل أنت متأكد؟', async () => { DB.reset(); await DB.flush(); toast('تم التصفير'); setTimeout(() => location.reload(), 600); }, 'حذف الكل');
 }
 
+// ================= إحساس التطبيق (موبايل) =================
+const isStandalone = () => matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
+const isIOS = () => /iphone|ipad|ipod/i.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+const coarse = () => matchMedia('(pointer: coarse)').matches;
+document.documentElement.classList.toggle('standalone', isStandalone());
+document.documentElement.classList.toggle('ios', isIOS());
+
+// اهتزاز خفيف: Android عبر vibrate، و iOS 18+ عبر مفتاح switch مخفي
+let hapticSw = null;
+function haptic(kind = 'light') {
+  try {
+    if (navigator.userActivation && !navigator.userActivation.hasBeenActive) return; // المتصفح يمنع الاهتزاز قبل أول لمسة
+    if (navigator.vibrate) { navigator.vibrate(kind === 'success' ? [14, 60, 22] : kind === 'error' ? [40, 60, 40] : 12); return; }
+    if (!isIOS()) return;
+    if (!hapticSw) {
+      hapticSw = document.createElement('label');
+      hapticSw.setAttribute('aria-hidden', 'true');
+      hapticSw.style.cssText = 'position:fixed;left:-200px;top:0;width:1px;height:1px;opacity:0;pointer-events:none;overflow:hidden';
+      hapticSw.innerHTML = '<input type="checkbox" switch tabindex="-1">';
+      document.body.appendChild(hapticSw);
+    }
+    hapticSw.click();
+    if (kind === 'success' || kind === 'error') setTimeout(() => hapticSw.click(), 110);
+  } catch {}
+}
+
+// إعادة رسم الصفحة الحالية (للسحب للتحديث ووصول تغييرات من جهاز آخر)
+function renderCurrent() {
+  $('#top-actions').innerHTML = '';
+  renderNav();
+  ROUTES[current].r($('#view'));
+  afterRender();
+}
+function afterRender() {
+  const v = $('#view');
+  if (current === Object.keys(ROUTES).find(can) && canInstall() && !installDismissed()) {
+    const card = document.createElement('div');
+    card.className = 'install-card glass';
+    card.innerHTML = `<img src="brand/logo-192.png" alt="" width="46" height="46"><div class="grow"><b>ثبّت تطبيق أيار</b><div class="small muted">يفتح بسرعة من الشاشة الرئيسية ويعمل حتى بدون إنترنت</div></div>
+      <button class="btn primary sm" id="ic-go">تثبيت</button><button class="btn icon ghost sm" id="ic-x" aria-label="إخفاء">${I.x}</button>`;
+    v.prepend(card);
+    $('#ic-go', card).onclick = installApp;
+    $('#ic-x', card).onclick = () => { localStorage.setItem('ayar-install-later', Date.now()); card.remove(); };
+  }
+  if (current === 'pos') {
+    $('#top-actions').insertAdjacentHTML('afterbegin', `<button class="btn ghost" id="pos-focus" title="وضع الكاشير بملء الشاشة">${document.body.classList.contains('pos-focus') ? I.shrink : I.expand}<span class="hide-sm">${document.body.classList.contains('pos-focus') ? 'خروج' : 'ملء الشاشة'}</span></button>`);
+    $('#pos-focus').onclick = () => setPosFocus(!document.body.classList.contains('pos-focus'));
+  }
+}
+
+// تثبيت التطبيق
+let deferredInstall = null;
+window.addEventListener('beforeinstallprompt', e => { e.preventDefault(); deferredInstall = e; if (me) { renderNav(); } });
+window.addEventListener('appinstalled', () => { deferredInstall = null; toast('تم تثبيت تطبيق أيار ✅'); $('.install-card')?.remove(); if (me) renderNav(); });
+const canInstall = () => !isStandalone() && (!!deferredInstall || isIOS());
+const installDismissed = () => Date.now() - (+localStorage.getItem('ayar-install-later') || 0) < 14 * 864e5;
+function installApp() {
+  haptic();
+  if (deferredInstall) {
+    deferredInstall.prompt();
+    deferredInstall.userChoice.finally(() => { deferredInstall = null; if (me) renderNav(); });
+    return;
+  }
+  const share = `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v13M7 8l5-5 5 5M5 12v7a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-7"/></svg>`;
+  const addI = `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="3" y="3" width="18" height="18" rx="5"/><path d="M12 8v8M8 12h8"/></svg>`;
+  modal(`${modalHead('تثبيت أيار على الآيفون / الآيباد')}
+    <div class="ios-steps">
+      <div class="ios-step"><span class="n">1</span><div>اضغط زر <b>المشاركة</b> <span class="ios-ic">${share}</span> في شريط المتصفح${/CriOS|FxiOS|EdgiOS/.test(navigator.userAgent) ? '' : ' (أسفل الشاشة في Safari)'}</div></div>
+      <div class="ios-step"><span class="n">2</span><div>انزل واختر <b>«إضافة إلى الشاشة الرئيسية»</b> <span class="ios-ic">${addI}</span></div></div>
+      <div class="ios-step"><span class="n">3</span><div>اضغط <b>«إضافة»</b> — ستجد أيقونة أيار <img src="icons/icon-180.png" alt="" width="26" height="26" style="vertical-align:middle;border-radius:7px"> بين تطبيقاتك</div></div>
+    </div>
+    <p class="small muted center" style="margin:14px 0 0">بعد التثبيت افتح أيار من أيقونته: يفتح بملء الشاشة ويعمل بدون إنترنت.</p>`, { size: 'sm' });
+}
+
+// وضع الكاشير بملء الشاشة
+function setPosFocus(on) {
+  document.body.classList.toggle('pos-focus', on);
+  haptic();
+  try {
+    if (on && !document.fullscreenElement && document.documentElement.requestFullscreen && !isIOS()) document.documentElement.requestFullscreen({ navigationUI: 'hide' }).catch(() => {});
+    if (!on && document.fullscreenElement) document.exitFullscreen().catch(() => {});
+  } catch {}
+  const b = $('#pos-focus'); if (b) b.innerHTML = `${on ? I.shrink : I.expand}<span class="hide-sm">${on ? 'خروج' : 'ملء الشاشة'}</span>`;
+}
+document.addEventListener('fullscreenchange', () => { if (!document.fullscreenElement && document.body.classList.contains('pos-focus') && !isIOS()) setPosFocus(false); });
+
+// العنوان الكبير يصغر عند النزول (مثل تطبيقات iOS)
+let scrolledState = false;
+window.addEventListener('scroll', () => {
+  const s = window.scrollY > 24;
+  if (s !== scrolledState) { scrolledState = s; document.body.classList.toggle('scrolled', s); }
+}, { passive: true });
+
+// اسحب للأسفل للتحديث
+function setupPullToRefresh() {
+  const ind = document.createElement('div');
+  ind.id = 'ptr'; ind.setAttribute('aria-hidden', 'true');
+  ind.innerHTML = '<img src="brand/logo-192.png" alt="" width="30" height="30">';
+  document.body.appendChild(ind);
+  let y0 = null, x0 = 0, d = 0, active = false, busy = false;
+  const reset = () => { ind.classList.remove('ready', 'spin'); ind.style.transform = ''; ind.style.opacity = ''; active = false; };
+  window.addEventListener('touchstart', e => {
+    y0 = null;
+    if (busy || !me || window.scrollY > 2 || e.touches.length > 1) return;
+    if ($('#modal-root').children.length || document.body.classList.contains('nav-open') || document.body.classList.contains('cart-open')) return;
+    if (e.target.closest('input, textarea, select, video, .cart, .no-ptr')) return;
+    y0 = e.touches[0].clientY; x0 = e.touches[0].clientX; d = 0;
+  }, { passive: true });
+  window.addEventListener('touchmove', e => {
+    if (y0 === null) return;
+    const dy = e.touches[0].clientY - y0, dx = Math.abs(e.touches[0].clientX - x0);
+    if (!active && (dy < 8 || dx > dy)) { if (dx > 14 || dy < -4) y0 = null; return; }
+    if (window.scrollY > 2) { y0 = null; reset(); return; }
+    active = true;
+    d = Math.min(120, dy * 0.5);
+    const was = ind.classList.contains('ready');
+    ind.classList.toggle('ready', d >= 62);
+    if (!was && d >= 62) haptic();
+    ind.style.opacity = Math.min(1, d / 50);
+    ind.style.transform = `translate(-50%, ${d}px) rotate(${d * 3}deg)`;
+  }, { passive: true });
+  window.addEventListener('touchend', async () => {
+    if (y0 === null && !active) return;
+    y0 = null;
+    if (!active) return;
+    if (!ind.classList.contains('ready')) return reset();
+    busy = true; ind.classList.add('spin'); ind.style.transform = 'translate(-50%, 64px)';
+    try { await DB.sync(); } catch {}
+    renderCurrent();
+    setTimeout(() => { busy = false; reset(); }, 420);
+  });
+}
+
+// سحب النافذة للأسفل لإغلاقها (Bottom sheet)
+function enableSheetSwipe(back, close) {
+  const sheet = back.firstElementChild;
+  let y0 = null, dy = 0, t0 = 0, dragging = false;
+  sheet.addEventListener('touchstart', e => {
+    if (!matchMedia('(max-width: 760px)').matches || e.touches.length > 1) return;
+    const onHandle = e.target.closest('.sheet-grab, .modal-head');
+    if (!onHandle && (sheet.scrollTop > 0 || e.target.closest('input, textarea, select, video, canvas, .table-wrap, .pick-list'))) return;
+    y0 = e.touches[0].clientY; dy = 0; t0 = Date.now(); dragging = false;
+  }, { passive: true });
+  sheet.addEventListener('touchmove', e => {
+    if (y0 === null) return;
+    dy = e.touches[0].clientY - y0;
+    if (!dragging && dy > 6) { dragging = true; sheet.style.transition = 'none'; }
+    if (dragging) { sheet.style.transform = `translateY(${Math.max(0, dy)}px)`; back.style.background = `rgba(20,10,40,${Math.max(0.05, 0.35 - dy / 900)})`; if (e.cancelable) e.preventDefault(); }
+  }, { passive: false });
+  const end = () => {
+    if (y0 === null) return;
+    y0 = null;
+    if (!dragging) return;
+    const v = dy / Math.max(1, Date.now() - t0);
+    sheet.style.transition = 'transform .22s cubic-bezier(.2,.8,.2,1)';
+    if (dy > 120 || v > 0.6) { sheet.style.transform = 'translateY(105%)'; haptic(); setTimeout(close, 200); }
+    else { sheet.style.transform = ''; back.style.background = ''; }
+  };
+  sheet.addEventListener('touchend', end);
+  sheet.addEventListener('touchcancel', end);
+}
+
+// لون شريط الحالة يتبع الثيم
+function syncThemeColor() {
+  const dark = S()?.settings?.theme === 'dark';
+  const c = dark ? '#140c26' : '#f3ecff';
+  let m = document.querySelector('meta[name="theme-color"]');
+  if (!m) { m = document.createElement('meta'); m.name = 'theme-color'; document.head.appendChild(m); }
+  m.content = c;
+}
+
+// مؤشر الاتصال العائم (يظهر فقط عند الانقطاع أو وجود مبيعات بانتظار الرفع)
+function updateNetPill(st) {
+  const el = $('#net-pill'); if (!el) return;
+  const show = st.online && (st.offline || st.outbox);
+  el.classList.toggle('hidden', !show);
+  if (!show) return;
+  el.classList.toggle('warn', !!st.offline);
+  el.innerHTML = st.offline
+    ? `<i class="dot"></i>بدون إنترنت${st.outbox ? ` • ${st.outbox} فاتورة بانتظار الرفع` : ' — البيع مستمر وسيُرفع تلقائياً'}`
+    : `<i class="dot"></i>جاري رفع ${st.outbox} فاتورة…`;
+}
+
+// تسجيل عامل الخدمة (العمل بدون إنترنت)
+function registerSW() {
+  if (!('serviceWorker' in navigator) || !DB.online) return;
+  if (location.protocol !== 'https:' && !['localhost', '127.0.0.1'].includes(location.hostname)) return;
+  navigator.serviceWorker.register('/sw.js').then(reg => {
+    // فحص التحديث عند العودة للتطبيق
+    document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') reg.update().catch(() => {}); });
+  }).catch(() => {});
+}
+
+function hideSplash() {
+  const sp = $('#splash'); if (!sp || sp.classList.contains('out')) return;
+  sp.classList.add('out'); setTimeout(() => sp.remove(), 450);
+}
+
 // ================= تشغيل =================
 (async () => {
   DB.onAuthLost = () => { if (me) { me = null; toast('انتهت الجلسة — سجّل الدخول مجدداً', true); showLogin(); } };
@@ -1792,7 +2016,7 @@ function renderSettings(v) {
       applyTheme();
       if (!can(current)) return go();
       const y = window.scrollY;
-      $('#top-actions').innerHTML = ''; renderNav(); ROUTES[current].r($('#view'));
+      renderCurrent();
       window.scrollTo(0, y);
     }, 400);
   };
@@ -1801,19 +2025,24 @@ function renderSettings(v) {
     const txt = !st.online ? 'وضع محلي' : st.offline ? `غير متصل${st.pending ? ` — ${st.pending} بانتظار الحفظ` : ''}` : st.saving || st.pending ? 'جاري الحفظ…' : 'محفوظ على السحابة';
     el.innerHTML = `<i class="dot"></i>${esc(txt)}`;
     el.classList.toggle('offline', !!st.offline || !st.online); el.classList.toggle('saving', !!(st.saving || st.pending) && !st.offline);
+    updateNetPill(st);
   };
+  DB.onSynced = n => { toast(`تم رفع ${n} ${n === 1 ? 'فاتورة' : 'فواتير'} من وقت انقطاع الإنترنت ✅`); haptic('success'); };
+  if (coarse()) setupPullToRefresh();
   $('#menu-btn').innerHTML = I.menu;
   $('#menu-btn').onclick = () => setNav(true);
   $('#scrim').onclick = () => { setNav(false); setCart(false); };
   window.addEventListener('hashchange', () => me && go());
   const ping = await DB.detect();
   const ss = $('#sync-status');
-  ss.innerHTML = `<i class="dot"></i>${DB.online ? 'متصل بالخادم' : 'وضع محلي (غير متصل)'}`;
-  ss.classList.toggle('offline', !DB.online);
+  ss.innerHTML = `<i class="dot"></i>${!DB.online ? 'وضع محلي (غير متصل)' : DB.isOffline ? 'بدون إنترنت — نسخة محفوظة' : 'متصل بالخادم'}`;
+  ss.classList.toggle('offline', !DB.online || DB.isOffline);
   if (DB.online) {
+    registerSW();
     pharmacyName = ping.name || pharmacyName; firstRun = !!ping.firstRun;
     const u = await DB.me();
-    return u ? startSession(u) : showLogin();
+    await (u ? startSession(u) : showLogin());
+    return hideSplash();
   }
   // وضع محلي (فتح الملف مباشرة بدون خادم)
   await DB.load();
@@ -1824,6 +2053,7 @@ function renderSettings(v) {
   pharmacyName = S().settings.name; firstRun = S().users.some(u => u.mustChange);
   applyTheme();
   const local = S().users.find(u => u.id === sessionStorage.getItem('ayar-user') && u.active !== false);
-  local ? startSession(local) : showLogin();
+  await (local ? startSession(local) : showLogin());
+  hideSplash();
 })();
 })();

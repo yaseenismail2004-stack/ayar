@@ -57,3 +57,5 @@
   document.getElementById('q').oninput = e => { q = e.target.value; draw(); };
   drawChips(); draw();
 })();
+// موقع العرض يعمل أيضاً بدون إنترنت (آخر نسخة من المنتجات)
+if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.hostname === 'localhost')) navigator.serviceWorker.register('/sw.js').catch(() => {});
